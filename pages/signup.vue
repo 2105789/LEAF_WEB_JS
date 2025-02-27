@@ -11,7 +11,8 @@
             type="email" 
             class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all duration-200"
             placeholder="Enter your email"
-            required 
+            required
+            :disabled="isProcessing"
           />
         </div>
         
@@ -22,15 +23,24 @@
             type="password" 
             class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all duration-200"
             placeholder="Choose a strong password"
-            required 
+            required
+            :disabled="isProcessing"
           />
         </div>
 
         <button 
           type="submit" 
-          class="w-full bg-teal-600 text-white py-3 rounded-lg font-medium hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 transform transition-all duration-200 hover:scale-[1.02]"
+          class="w-full bg-teal-600 text-white py-3 rounded-lg font-medium hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 transform transition-all duration-200 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:bg-teal-600"
+          :disabled="isProcessing"
         >
-          Continue with Email
+          <span v-if="isProcessing" class="flex items-center justify-center gap-2">
+            <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Processing...
+          </span>
+          <span v-else>Continue with Email</span>
         </button>
       </form>
 
@@ -45,10 +55,18 @@
 
       <button 
         @click="handleGoogleSignup"
-        class="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-all duration-200"
+        class="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
+        :disabled="isProcessing"
       >
         <img src="https://www.google.com/favicon.ico" alt="Google" class="w-5 h-5" />
-        <span class="text-gray-700 font-medium">Google</span>
+        <span v-if="isProcessing" class="text-gray-700 font-medium flex items-center gap-2">
+          <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          Connecting...
+        </span>
+        <span v-else class="text-gray-700 font-medium">Google</span>
       </button>
 
       <p class="mt-8 text-center text-gray-600">
@@ -66,6 +84,8 @@
     @submit="submitModalDetails"
     @cancel="cancelModal"
   />
+
+  <Toast ref="toast" />
 </template>
 
 <script setup>
@@ -79,6 +99,7 @@ import { useAuth } from '~/composables/useAuth'
 import { signInWithPopup, GoogleAuthProvider, getAuth } from 'firebase/auth'
 import { auth } from '~/utils/firebase.js'
 import AdditionalDetailsModal from '~/components/AdditionalDetailsModal.vue'
+import Toast from '~/components/Toast.vue'
 
 const router = useRouter()
 const { setToken, fetchUser } = useAuth()
@@ -86,6 +107,8 @@ const { setToken, fetchUser } = useAuth()
 // State for email signup fields
 const email = ref('')
 const password = ref('')
+const toast = ref(null)
+const isProcessing = ref(false)
 
 // State for controlling the modal popup and storing pending signup data
 const showModal = ref(false)
@@ -97,7 +120,12 @@ const pendingSignupData = ref(null)
  * 2. On submit, we store those values and display the modal.
  */
 const handleEmailSignup = async () => {
+  if (isProcessing.value) return
+  
   try {
+    isProcessing.value = true
+    toast.value?.addToast('Processing signup...', 'info', 0)
+    
     console.log('Starting email signup...')
     pendingSignupData.value = {
       method: 'email',
@@ -107,7 +135,8 @@ const handleEmailSignup = async () => {
     showModal.value = true
   } catch (error) {
     console.error('Email signup error:', error)
-    alert(error?.data?.error || 'Email signup failed')
+    toast.value?.addToast(error?.data?.error || 'Email signup failed. Please try again.', 'error', 3000)
+    isProcessing.value = false
   }
 }
 
@@ -118,18 +147,23 @@ const handleEmailSignup = async () => {
  * 3. When the sign in completes, we save the idToken and show the modal.
  */
 const handleGoogleSignup = async () => {
+  if (isProcessing.value) return
+  
   try {
+    isProcessing.value = true
+    toast.value?.addToast('Connecting to Google...', 'info', 0)
+    
     const provider = new GoogleAuthProvider()
-    // Add login hint and prompt for better UX
     provider.setCustomParameters({
       prompt: 'select_account'
     })
     
-    // Get the auth instance and sign in
     const auth = getAuth()
     const result = await signInWithPopup(auth, provider)
-    const idToken = await result.user.getIdToken()
     
+    toast.value?.addToast('Google authentication successful, processing signup...', 'info', 0)
+    
+    const idToken = await result.user.getIdToken()
     pendingSignupData.value = {
       method: 'google',
       idToken
@@ -138,12 +172,13 @@ const handleGoogleSignup = async () => {
   } catch (error) {
     console.error('Google signup error:', error)
     if (error.code === 'auth/popup-closed-by-user') {
-      alert('Signup popup was closed. Please try again.')
+      toast.value?.addToast('Signup popup was closed. Please try again.', 'error', 3000)
     } else if (error.code === 'auth/popup-blocked') {
-      alert('Popup was blocked by the browser. Please enable popups for this site.')
+      toast.value?.addToast('Popup was blocked by the browser. Please enable popups for this site.', 'error', 3000)
     } else {
-      alert('Google signup failed: ' + error.message)
+      toast.value?.addToast('Google signup failed: ' + error.message, 'error', 3000)
     }
+    isProcessing.value = false
   }
 }
 
@@ -152,10 +187,11 @@ const handleGoogleSignup = async () => {
  * signup data and call the appropriate API endpoint.
  */
 const submitModalDetails = async (details) => {
-  console.log('Submitting additional details...')
-  showModal.value = false
-  if (pendingSignupData.value.method === 'email') {
-    try {
+  try {
+    console.log('Submitting additional details...')
+    showModal.value = false
+    
+    if (pendingSignupData.value.method === 'email') {
       console.log('Calling signup endpoint...')
       const data = await $fetch('/api/auth/signup', {
         method: 'POST',
@@ -173,18 +209,16 @@ const submitModalDetails = async (details) => {
         console.log('Fetching user data...')
         const userData = await fetchUser()
         if (userData) {
+          toast.value?.addToast('Signup successful! Redirecting...', 'success', 2000)
+          // Wait for toast to be visible before redirecting
+          await new Promise(resolve => setTimeout(resolve, 500))
           console.log('User data fetched, redirecting to profile...')
           router.push('/chat')
         } else {
-          alert('Failed to fetch user data')
+          toast.value?.addToast('Failed to fetch user data. Please try again.', 'error', 3000)
         }
       }
-    } catch (error) {
-      console.error('Email signup error:', error)
-      alert(error?.data?.error || 'Email signup failed')
-    }
-  } else if (pendingSignupData.value.method === 'google') {
-    try {
+    } else if (pendingSignupData.value.method === 'google') {
       console.log('Calling google-signup endpoint...')
       const data = await $fetch('/api/auth/google-signup', {
         method: 'POST',
@@ -201,16 +235,21 @@ const submitModalDetails = async (details) => {
         console.log('Fetching user data...')
         const userData = await fetchUser()
         if (userData) {
+          toast.value?.addToast('Signup successful! Redirecting...', 'success', 2000)
+          // Wait for toast to be visible before redirecting
+          await new Promise(resolve => setTimeout(resolve, 500))
           console.log('User data fetched, redirecting to profile...')
           router.push('/chat')
         } else {
-          alert('Failed to fetch user data')
+          toast.value?.addToast('Failed to fetch user data. Please try again.', 'error', 3000)
         }
       }
-    } catch (error) {
-      console.error('Google signup error:', error)
-      alert(error?.data?.error || 'Google signup failed')
     }
+  } catch (error) {
+    console.error('Signup error:', error)
+    toast.value?.addToast(error?.data?.error || 'Signup failed. Please try again.', 'error', 3000)
+  } finally {
+    isProcessing.value = false
   }
 }
 
@@ -220,5 +259,6 @@ const submitModalDetails = async (details) => {
 const cancelModal = () => {
   showModal.value = false
   pendingSignupData.value = null
+  isProcessing.value = false
 }
 </script>

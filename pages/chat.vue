@@ -25,6 +25,7 @@
       <ChatHeader
         :thread="selectedThread"
         @clear="clearThread"
+        @update-thread="updateThreadTitle"
         @pdf-upload="handlePdfUpload"
       />
 

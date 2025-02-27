@@ -2,10 +2,8 @@
 <template>
   <div class="w-72 bg-white border-r border-gray-200 flex flex-col h-full">
     <!-- Logo -->
-    <div class="shrink-0 h-14 border-b border-gray-200 flex items-center justify-center">
-      <h1 class="text-2xl font-bold text-gray-800">
-        <span class="text-teal-600">LEAF</span>
-      </h1>
+    <div class="shrink-0 h-14 border-b border-gray-200 flex items-center px-4">
+      <img src="/logo.png" alt="Logo" class="border-none h-10 object-contain">
     </div>
 
     <!-- Threads List -->
@@ -13,7 +11,7 @@
       <div 
         v-for="thread in threads" 
         :key="thread.id"
-        class="p-4 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100 group relative"
+        class="px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100 group relative"
         :class="{'bg-teal-50': selectedThread?.id === thread.id}"
       >
         <div class="flex items-center justify-between">
@@ -81,7 +79,7 @@
       <!-- New Thread Button -->
       <button 
         @click="$emit('create-thread')"
-        class="w-full p-4 text-left hover:bg-gray-50 transition-colors flex items-center gap-2 text-teal-600 border-b border-gray-100"
+        class="w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors flex items-center gap-2 text-teal-600 border-b border-gray-100"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
@@ -90,9 +88,9 @@
       </button>
 
       <!-- Profile Section -->
-      <div class="p-4 flex items-center gap-3">
+      <div class="px-4 py-3">
         <div 
-          class="flex-1 flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
+          class="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
           @click="$router.push('/profile')"
         >
           <div class="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-600 font-medium">
@@ -103,16 +101,16 @@
               {{ user?.email }}
             </p>
           </div>
+          <button 
+            @click.stop="$emit('logout')"
+            class="text-gray-400 hover:text-gray-600 transition-colors"
+            title="Logout"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M3 3a1 1 0 011 1v12a1 1 0 11-2 0V4a1 1 0 011-1zm7.707 3.293a1 1 0 010 1.414L9.414 9H17a1 1 0 110 2H9.414l1.293 1.293a1 1 0 01-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0z" clip-rule="evenodd" />
+            </svg>
+          </button>
         </div>
-        <button 
-          @click="$emit('logout')"
-          class="text-gray-400 hover:text-gray-600 transition-colors"
-          title="Logout"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M3 3a1 1 0 011 1v12a1 1 0 11-2 0V4a1 1 0 011-1zm7.707 3.293a1 1 0 010 1.414L9.414 9H17a1 1 0 110 2H9.414l1.293 1.293a1 1 0 01-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0z" clip-rule="evenodd" />
-          </svg>
-        </button>
       </div>
     </div>
   </div>
@@ -179,4 +177,4 @@ const updateThreadTitle = async () => {
 const deleteThread = async (thread) => {
   emit('delete-thread', thread)
 }
-</script> 
+</script>
