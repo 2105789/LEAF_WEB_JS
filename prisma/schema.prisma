@@ -1,0 +1,43 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  password     String?   // Will be null if the user signed up via Google
+  position     String?
+  organization String?
+  role         String    @default("normal") // "admin", "moderator", "normal"
+  googleId     String?   @unique
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  threads      Thread[]  // Relation to threads
+  messages     Message[] // Relation to messages
+}
+
+model Thread {
+  id        Int       @id @default(autoincrement())
+  title     String
+  userId    Int       // Foreign key to User
+  user      User      @relation(fields: [userId], references: [id])
+  messages  Message[] // Relation to messages
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Message {
+  id        Int      @id @default(autoincrement())
+  content   String
+  role      String   // "user" or "assistant"
+  threadId  Int      // Foreign key to Thread
+  thread    Thread   @relation(fields: [threadId], references: [id])
+  userId    Int      // Foreign key to User
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}

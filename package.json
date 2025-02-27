@@ -1,0 +1,51 @@
+{
+  "name": "nuxt-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "start": "nuxt start",
+    "prisma": "prisma"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.22.0",
+    "@langchain/community": "^0.3.32",
+    "@langchain/core": "^0.3.40",
+    "@langchain/google-genai": "^0.1.9",
+    "@langchain/openai": "^0.4.4",
+    "@langchain/qdrant": "^0.1.1",
+    "@nuxtjs/tailwindcss": "^6.13.1",
+    "@prisma/client": "^6.4.1",
+    "@prisma/nuxt": "^0.3.0",
+    "@qdrant/js-client-rest": "^1.13.0",
+    "@tavily/core": "^0.3.1",
+    "@xenova/transformers": "^2.17.2",
+    "assert": "^2.1.0",
+    "axios": "^1.7.9",
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^1.20.3",
+    "dompurify": "^3.2.4",
+    "firebase": "^9.0.0",
+    "firebase-admin": "^11.0.0",
+    "fs": "^0.0.1-security",
+    "h3": "^1.15.1",
+    "jsonwebtoken": "^9.0.2",
+    "langchain": "^0.3.19",
+    "marked": "^15.0.7",
+    "nuxt": "latest",
+    "os": "^0.1.2",
+    "path": "^0.12.7",
+    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^4.10.38"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.0.0",
+    "postcss": "^8.0.0",
+    "prisma": "^6.4.1",
+    "tailwindcss": "^3.0.0"
+  },
+  "overrides": {
+    "rollup": "^4.9.0"
+  }
+}
