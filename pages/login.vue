@@ -121,6 +121,8 @@ const handleLogin = async () => {
 const handleGoogleLogin = async () => {
   try {
     console.log('Starting Google login flow...')
+    console.log('Current window location:', window.location.href)
+    console.log('Current window origin:', window.location.origin)
     const provider = new GoogleAuthProvider()
     provider.setCustomParameters({
       prompt: 'select_account'
