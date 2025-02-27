@@ -150,8 +150,12 @@
         </div>
       </div>
     </template>
-    <div v-else class="text-center text-gray-500 mt-10">
-      Select or create a new thread to start chatting
+    <div v-else class="h-full flex items-center justify-center">
+      <div class="bg-white p-8 rounded-lg shadow-sm border border-gray-100 max-w-md w-full text-center">
+        <div class="text-4xl mb-4">💬</div>
+        <h3 class="text-xl font-medium text-gray-900 mb-2">Select a Thread</h3>
+        <p class="text-gray-500">Choose an existing thread from the sidebar or create a new one to start chatting.</p>
+      </div>
     </div>
   </div>
 </template>
