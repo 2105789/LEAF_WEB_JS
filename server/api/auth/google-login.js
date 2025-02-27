@@ -2,39 +2,38 @@
 import jwt from 'jsonwebtoken'
 import { PrismaClient } from '@prisma/client'
 import admin from 'firebase-admin'
-import { setCookie } from 'h3'
+import { setCookie, setResponseHeaders } from 'h3'
 
 const prisma = new PrismaClient()
 
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
   const config = useRuntimeConfig()
-  
-  // Validate required Firebase Admin configuration
-  if (!config.firebaseAdmin?.projectId || !config.firebaseAdmin?.clientEmail || !config.firebaseAdmin?.privateKey) {
-    console.error('Missing Firebase Admin configuration:', {
-      hasProjectId: !!config.firebaseAdmin?.projectId,
-      hasClientEmail: !!config.firebaseAdmin?.clientEmail,
-      hasPrivateKey: !!config.firebaseAdmin?.privateKey
-    })
-    throw new Error('Firebase Admin configuration is incomplete')
-  }
-
-  try {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: config.firebaseAdmin.projectId,
-        clientEmail: config.firebaseAdmin.clientEmail,
-        privateKey: config.firebaseAdmin.privateKey.replace(/\\n/g, '\n'),
-      }),
-    })
-  } catch (error) {
-    console.error('Failed to initialize Firebase Admin:', error)
-    throw error
-  }
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: config.firebaseAdmin.projectId,
+      clientEmail: config.firebaseAdmin.clientEmail,
+      privateKey: config.firebaseAdmin.privateKey.replace(/\\n/g, '\n'),
+    }),
+  })
 }
 
 export default defineEventHandler(async (event) => {
+  // Set CORS headers
+  setResponseHeaders(event, {
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Allow-Origin': process.env.NODE_ENV === 'production' 
+      ? 'https://leafo.vercel.app' 
+      : 'http://localhost:3000',
+    'Access-Control-Allow-Methods': 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  })
+
+  // Handle OPTIONS request for CORS preflight
+  if (event.req.method === 'OPTIONS') {
+    return 'OK'
+  }
+
   if (event.req.method !== 'POST') {
     event.res.statusCode = 405
     return { error: 'Method not allowed' }
@@ -73,10 +72,10 @@ export default defineEventHandler(async (event) => {
 
     // Set the token as a cookie with specific options
     setCookie(event, 'auth_token', token, {
-      httpOnly: false, // Allow JavaScript access
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 30 * 12,
+      httpOnly: true,
+      secure: true, // Always use secure in production
+      sameSite: 'none', // Required for cross-origin requests
+      maxAge: 60 * 60 * 24 * 30 * 12, // 1 year
       path: '/'
     })
 

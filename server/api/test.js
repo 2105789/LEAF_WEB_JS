@@ -1,5 +1,3 @@
-import { setCookie, setResponseHeaders } from 'h3'
-
 export default defineEventHandler(async (event) => {
   // Set CORS headers
   setResponseHeaders(event, {
@@ -16,14 +14,17 @@ export default defineEventHandler(async (event) => {
     return 'OK'
   }
 
-  // Clear the auth cookie by setting it to expire immediately
-  setCookie(event, 'auth_token', '', {
+  // Set a test cookie
+  setCookie(event, 'test_cookie', 'test_value', {
     httpOnly: true,
     secure: true,
-    sameSite: 'none',
-    maxAge: 0,
-    path: '/'
+    sameSite: 'none', // Important for cross-origin requests
+    path: '/',
   })
-  
-  return { success: true }
+
+  return {
+    status: 'success',
+    message: 'Test API is working',
+    timestamp: new Date().toISOString()
+  }
 }) 
