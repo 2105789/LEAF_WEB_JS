@@ -38,6 +38,7 @@
         :processing-state="processingState"
         @copy-success="toast?.addToast('Copied to clipboard!', 'success', 2000)"
         @copy-error="toast?.addToast('Failed to copy text', 'error', 2000)"
+        @submit="handleSubmit"
       />
 
       <!-- Input Area -->

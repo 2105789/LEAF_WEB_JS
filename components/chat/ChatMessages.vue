@@ -2,7 +2,25 @@
 <template>
   <div class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50" ref="messagesContainer">
     <template v-if="selectedThread">
+      <div v-if="messages.length === 0" class="h-full flex items-center justify-center">
+        <div class="max-w-5xl w-full mx-auto space-y-6 -mt-20">
+          <h3 class="text-center text-lg text-gray-600 mb-8">Here are some suggestions to get started:</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 px-4">
+            <div 
+              v-for="(suggestion, index) in suggestions" 
+              :key="index"
+              @click="handleSuggestionClick(suggestion)"
+              class="bg-white p-6 rounded-lg shadow-sm border border-gray-100 hover:border-teal-200 hover:shadow-md transition-all cursor-pointer transform hover:-translate-y-1"
+            >
+              <div class="text-3xl mb-3">{{ suggestion.emoji }}</div>
+              <h4 class="font-medium text-gray-900 mb-2">{{ suggestion.title }}</h4>
+              <p class="text-sm text-gray-600">{{ suggestion.question }}</p>
+            </div>
+          </div>
+        </div>
+      </div>
       <div 
+        v-else
         v-for="message in messages" 
         :key="message.id"
         class="max-w-4xl mx-auto"
@@ -166,7 +184,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['copy-success', 'copy-error'])
+const emit = defineEmits(['copy-success', 'copy-error', 'submit'])
 const messagesContainer = ref(null)
 
 // Format date helper
@@ -226,6 +244,49 @@ watch(() => props.selectedThread, () => {
 onMounted(() => {
   scrollToBottom()
 })
+
+// Example suggestions
+const suggestions = [
+  {
+    emoji: '🌡️',
+    title: 'Climate Science',
+    question: 'What are the main causes of global warming and their relative impact on climate change?'
+  },
+  {
+    emoji: '🌿',
+    title: 'Sustainable Solutions',
+    question: 'What are the most effective ways for individuals to reduce their carbon footprint?'
+  },
+  {
+    emoji: '🏭',
+    title: 'Industry Impact',
+    question: 'Which industries contribute the most to greenhouse gas emissions and what solutions exist?'
+  },
+  {
+    emoji: '🌊',
+    title: 'Ocean Impact',
+    question: 'How does climate change affect ocean ecosystems and what are the consequences?'
+  },
+  {
+    emoji: '🔋',
+    title: 'Clean Energy',
+    question: 'What are the most promising renewable energy technologies for combating climate change?'
+  },
+  {
+    emoji: '🌳',
+    title: 'Forest Conservation',
+    question: 'How do deforestation and forest conservation impact climate change?'
+  }
+]
+
+// Handle suggestion click
+const handleSuggestionClick = (suggestion) => {
+  emit('submit', {
+    message: suggestion.question,
+    pdfContext: null,
+    mode: 'general'
+  })
+}
 </script>
 
 <style>
