@@ -59,12 +59,40 @@ const SEARCH_OPTIONS = {
 // Function to determine if a query requires research
 function requiresResearch(query) {
   const researchKeywords = [
-    "climate change", "global warming", "research", "study", "data", "statistics", 
-    "explain", "factors", "causes", "effects", "impact", "evidence", "science",
-    "report", "analysis", "findings", "publication", "journal", "references"
+    // Scientific topics
+    "climate change", "global warming", "study", "research", "experiment",
+    "scientific", "evidence", "hypothesis", "theory", "methodology",
+    
+    // Data analysis
+    "data", "statistics", "analysis", "correlation", "causation", "trends",
+    "metrics", "quantitative", "qualitative", "sample size", "margin of error",
+    
+    // Academic references
+    "paper", "publication", "journal", "peer-reviewed", "citations",
+    "bibliography", "literature review", "meta-analysis", "proceedings",
+    
+    // Factual content
+    "facts", "evidence", "verify", "historical", "timeline", "survey",
+    "poll", "census", "demographic", "percentage", "rate",
+    
+    // Visualizations
+    "graph", "chart", "diagram", "table", "figure", "visualization",
+    "map", "plot", "image", "picture", "illustration",
+    
+    // Topics requiring expertise
+    "medical", "legal", "economic", "political", "technological",
+    "environmental", "psychological", "sociological", "anthropological",
+    
+    // Current events
+    "recent", "latest", "current", "news", "development", "update",
+    "breakthrough", "discovery", "innovation", "advancement",
+    
+    // Specific questions
+    "why does", "how does", "what causes", "explain", "compare",
+    "contrast", "analyze", "evaluate", "examine", "investigate"
   ];
   
-  return researchKeywords.some(keyword => 
+  return researchKeywords.some(keyword =>
     query.toLowerCase().includes(keyword.toLowerCase())
   );
 }
