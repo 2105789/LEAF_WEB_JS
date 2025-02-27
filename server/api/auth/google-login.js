@@ -9,13 +9,29 @@ const prisma = new PrismaClient()
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
   const config = useRuntimeConfig()
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: config.firebaseAdmin.projectId,
-      clientEmail: config.firebaseAdmin.clientEmail,
-      privateKey: config.firebaseAdmin.privateKey.replace(/\\n/g, '\n'),
-    }),
-  })
+  
+  // Validate required Firebase Admin configuration
+  if (!config.firebaseAdmin?.projectId || !config.firebaseAdmin?.clientEmail || !config.firebaseAdmin?.privateKey) {
+    console.error('Missing Firebase Admin configuration:', {
+      hasProjectId: !!config.firebaseAdmin?.projectId,
+      hasClientEmail: !!config.firebaseAdmin?.clientEmail,
+      hasPrivateKey: !!config.firebaseAdmin?.privateKey
+    })
+    throw new Error('Firebase Admin configuration is incomplete')
+  }
+
+  try {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: config.firebaseAdmin.projectId,
+        clientEmail: config.firebaseAdmin.clientEmail,
+        privateKey: config.firebaseAdmin.privateKey.replace(/\\n/g, '\n'),
+      }),
+    })
+  } catch (error) {
+    console.error('Failed to initialize Firebase Admin:', error)
+    throw error
+  }
 }
 
 export default defineEventHandler(async (event) => {
