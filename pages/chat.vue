@@ -1,7 +1,7 @@
 <template>
   <div v-if="isInitializing" class="h-screen flex items-center justify-center bg-gray-100">
     <div class="text-center">
-      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto"></div>
       <p class="mt-4 text-gray-600">Loading...</p>
     </div>
   </div>

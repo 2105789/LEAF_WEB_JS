@@ -4,7 +4,7 @@
     <!-- Logo -->
     <div class="shrink-0 h-14 border-b border-gray-200 flex items-center justify-center">
       <h1 class="text-2xl font-bold text-gray-800">
-        <span class="text-blue-600">LEAF</span>
+        <span class="text-teal-600">LEAF</span>
       </h1>
     </div>
 
@@ -14,7 +14,7 @@
         v-for="thread in threads" 
         :key="thread.id"
         class="p-4 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100 group relative"
-        :class="{'bg-blue-50': selectedThread?.id === thread.id}"
+        :class="{'bg-teal-50': selectedThread?.id === thread.id}"
       >
         <div class="flex items-center justify-between">
           <div class="flex-1" @click="$emit('select-thread', thread)">
@@ -24,7 +24,7 @@
                 @keyup.enter="updateThreadTitle"
                 @keyup.esc="cancelEditing"
                 ref="titleInput"
-                class="flex-1 px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                class="flex-1 px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-teal-500"
                 :placeholder="thread.title"
               />
               <button 
@@ -81,7 +81,7 @@
       <!-- New Thread Button -->
       <button 
         @click="$emit('create-thread')"
-        class="w-full p-4 text-left hover:bg-gray-50 transition-colors flex items-center gap-2 text-blue-600 border-b border-gray-100"
+        class="w-full p-4 text-left hover:bg-gray-50 transition-colors flex items-center gap-2 text-teal-600 border-b border-gray-100"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
@@ -95,7 +95,7 @@
           class="flex-1 flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
           @click="$router.push('/profile')"
         >
-          <div class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-medium">
+          <div class="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-600 font-medium">
             {{ user?.email?.charAt(0).toUpperCase() }}
           </div>
           <div class="flex-1 min-w-0">

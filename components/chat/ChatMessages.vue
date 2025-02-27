@@ -11,7 +11,7 @@
           :class="[
             'rounded-lg shadow-sm relative group transition-all duration-300 pr-10 py-3',
             message.role === 'user' 
-              ? 'bg-indigo-50 border border-indigo-100' 
+              ? 'bg-teal-50 bg-opacity-50 border border-teal-100' 
               : 'bg-white border border-gray-100',
             message.isProcessing ? 'opacity-75' : 'opacity-100'
           ]"
@@ -19,7 +19,7 @@
           <div class="flex items-start gap-3 p-4">
             <div 
               class="w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0"
-              :class="message.role === 'user' ? 'bg-indigo-100 text-indigo-600' : 'bg-emerald-50 text-emerald-600'"
+              :class="message.role === 'user' ? 'bg-teal-100 text-teal-600' : 'bg-emerald-50 text-emerald-600'"
             >
               {{ message.role === 'user' ? 'U' : 'L' }}
             </div>
@@ -28,18 +28,18 @@
                 v-if="message.role === 'assistant'"
                 class="prose prose-sm max-w-none prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-100"
                 :class="[
-                  message.role === 'user' ? 'text-indigo-900' : 'text-gray-700',
+                  message.role === 'user' ? 'text-teal-900' : 'text-gray-700',
                   message.isProcessing ? 'opacity-75' : 'opacity-100'
                 ]"
                 v-html="markdownToHtml(message.content)"
               ></div>
               <div 
                 v-else 
-                class="whitespace-pre-wrap text-indigo-900"
+                class="whitespace-pre-wrap text-teal-900"
               >
                 {{ message.content }}
               </div>
-              <span class="text-xs mt-2 block" :class="message.role === 'user' ? 'text-indigo-400' : 'text-gray-400'">
+              <span class="text-xs mt-2 block" :class="message.role === 'user' ? 'text-teal-400' : 'text-gray-400'">
                 {{ formatDate(message.createdAt) }}
               </span>
             </div>
@@ -92,19 +92,19 @@
         <!-- Research Processing -->
         <div v-if="processingState === 'research'" class="bg-white border border-gray-100 rounded-lg shadow-sm p-4 transition-all duration-300">
           <div class="flex items-start gap-3">
-            <div class="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 text-sm shrink-0">
+            <div class="w-8 h-8 rounded-full bg-teal-50 flex items-center justify-center text-teal-600 text-sm shrink-0">
               🔬
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
-                <div class="h-4 w-4 bg-indigo-100 rounded-full animate-pulse"></div>
-                <div class="h-4 w-4 bg-indigo-100 rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
-                <div class="h-4 w-4 bg-indigo-100 rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
+                <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse"></div>
+                <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
+                <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
                 <span class="text-sm text-gray-400 ml-2">Researching... {{ processingTime }}s</span>
               </div>
               <div class="mt-2 space-y-2">
-                <div class="h-4 bg-indigo-50 rounded w-3/4 animate-pulse"></div>
-                <div class="h-4 bg-indigo-50 rounded w-1/2 animate-pulse"></div>
+                <div class="h-4 bg-teal-50 rounded w-3/4 animate-pulse"></div>
+                <div class="h-4 bg-teal-50 rounded w-1/2 animate-pulse"></div>
               </div>
             </div>
           </div>

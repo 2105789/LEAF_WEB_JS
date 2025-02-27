@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
+  <div class="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-teal-50 to-indigo-50 p-6">
     <div class="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 transform transition-all duration-300 hover:shadow-2xl">
       <h1 class="text-3xl font-bold text-center text-gray-800 mb-8">Welcome Back</h1>
       
@@ -9,7 +9,7 @@
           <input 
             v-model="email" 
             type="email" 
-            class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200"
+            class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all duration-200"
             placeholder="Enter your email"
             required 
           />
@@ -20,7 +20,7 @@
           <input 
             v-model="password" 
             type="password" 
-            class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200"
+            class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all duration-200"
             placeholder="Enter your password"
             required 
           />
@@ -28,7 +28,7 @@
 
         <button 
           type="submit" 
-          class="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transform transition-all duration-200 hover:scale-[1.02]"
+          class="w-full bg-teal-600 text-white py-3 rounded-lg font-medium hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 transform transition-all duration-200 hover:scale-[1.02]"
         >
           Sign In
         </button>
@@ -53,7 +53,7 @@
 
       <p class="mt-8 text-center text-gray-600">
         Don't have an account?
-        <nuxt-link to="/signup" class="text-blue-600 font-medium hover:text-blue-700 transition-colors duration-200">
+        <nuxt-link to="/signup" class="text-teal-600 font-medium hover:text-teal-700 transition-colors duration-200">
           Create account
         </nuxt-link>
       </p>
