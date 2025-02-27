@@ -9,11 +9,18 @@ const prisma = new PrismaClient()
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
   const config = useRuntimeConfig()
+  
+  // Handle the private key format
+  let privateKey = config.firebaseAdmin.privateKey
+  if (privateKey.includes('\\n')) {
+    privateKey = privateKey.replace(/\\n/g, '\n')
+  }
+  
   admin.initializeApp({
     credential: admin.credential.cert({
       projectId: config.firebaseAdmin.projectId,
       clientEmail: config.firebaseAdmin.clientEmail,
-      privateKey: config.firebaseAdmin.privateKey.replace(/\\n/g, '\n'),
+      privateKey: privateKey,
     }),
   })
 }
@@ -33,7 +40,15 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
+    console.log('Attempting to verify token...');
     const decodedToken = await admin.auth().verifyIdToken(idToken)
+    console.log('Token verified successfully:', {
+      uid: decodedToken.uid,
+      email: decodedToken.email,
+      issuer: decodedToken.iss,
+      audience: decodedToken.aud
+    });
+
     const { uid, email } = decodedToken
 
     // Look for an existing user (by googleId or email)
@@ -44,9 +59,12 @@ export default defineEventHandler(async (event) => {
     })
 
     if (!user) {
+      console.log('No existing user found for:', { uid, email });
       // User not found, signal that additional details are required.
       return { needsDetails: true }
     }
+
+    console.log('Existing user found:', { userId: user.id, userEmail: user.email });
 
     const config = useRuntimeConfig()
     const token = jwt.sign(
@@ -66,8 +84,35 @@ export default defineEventHandler(async (event) => {
 
     return { success: true }
   } catch (error) {
-    console.error('Google login error:', error)
+    // Log the token for debugging (only first few characters for security)
+    const truncatedToken = idToken ? `${idToken.substring(0, 10)}...` : 'no token';
+    console.error('Google login error details:', {
+      message: error.message,
+      code: error.code,
+      name: error.name,
+      stack: error.stack,
+      truncatedToken,
+      firebaseConfig: {
+        projectId: useRuntimeConfig().firebaseAdmin.projectId,
+        clientEmail: useRuntimeConfig().firebaseAdmin.clientEmail,
+        hasPrivateKey: !!useRuntimeConfig().firebaseAdmin.privateKey,
+        privateKeyLength: useRuntimeConfig().firebaseAdmin.privateKey?.length,
+      }
+    })
+    
+    // Check for specific Firebase Auth errors
+    if (error.code === 'auth/invalid-credential') {
+      event.res.statusCode = 400
+      return { error: 'Firebase credentials are invalid. Please check your configuration.' }
+    } else if (error.code === 'auth/id-token-expired') {
+      event.res.statusCode = 400
+      return { error: 'The provided token has expired. Please try logging in again.' }
+    } else if (error.code === 'auth/argument-error') {
+      event.res.statusCode = 400
+      return { error: 'Invalid token format. Please try logging in again.' }
+    }
+    
     event.res.statusCode = 400
-    return { error: 'Invalid Google token' }
+    return { error: 'Invalid Google token: ' + error.message }
   }
 })
