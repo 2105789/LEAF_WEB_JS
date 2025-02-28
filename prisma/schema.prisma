@@ -22,22 +22,30 @@ model User {
 }
 
 model Thread {
-  id        Int       @id @default(autoincrement())
-  title     String
-  userId    Int       // Foreign key to User
-  user      User      @relation(fields: [userId], references: [id])
-  messages  Message[] // Relation to messages
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id            Int       @id @default(autoincrement())
+  title         String
+  userId        Int       // Foreign key to User
+  user          User      @relation(fields: [userId], references: [id])
+  messages      Message[] // Relation to messages
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastContext   String?   @db.Text  // Stores the last conversation context
+  keyTopics     String[]  // Stores key topics discussed in the thread
+  lastMessage   Message?  @relation("LastMessage", fields: [lastMessageId], references: [id])
+  lastMessageId Int?      @unique  // Stores ID of the last message for quick access
 }
 
 model Message {
-  id        Int      @id @default(autoincrement())
-  content   String
-  role      String   // "user" or "assistant"
-  threadId  Int      // Foreign key to Thread
-  thread    Thread   @relation(fields: [threadId], references: [id])
-  userId    Int      // Foreign key to User
-  user      User     @relation(fields: [userId], references: [id])
-  createdAt DateTime @default(now())
+  id            Int      @id @default(autoincrement())
+  content       String   @db.Text
+  role          String   // "user" or "assistant"
+  threadId      Int      // Foreign key to Thread
+  thread        Thread   @relation(fields: [threadId], references: [id])
+  userId        Int      // Foreign key to User
+  user          User     @relation(fields: [userId], references: [id])
+  createdAt     DateTime @default(now())
+  threadAsLast  Thread?  @relation("LastMessage")
+  contextScore  Float?   // Relevance score for context tracking
+  parentMsgId   Int?     // Reference to parent message for context chains
+  messageType   String?  // Type of message (e.g., "question", "followup", "clarification")
 }

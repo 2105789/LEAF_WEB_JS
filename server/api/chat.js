@@ -72,7 +72,7 @@ function requiresResearch(query) {
     "medical", "legal", "economic", "political", "technological",
     "environmental", "psychological", "sociological", "anthropological",
     "recent", "latest", "current", "news", "development", "update",
-    "breakthrough", "discovery", "innovation", "advancement",
+    "breakthrough", "discovery", "innovation", "advancement","details","detail","detailed",
     "why does", "how does", "what causes", "explain", "compare",
     "contrast", "analyze", "evaluate", "examine", "investigate",
     "policy", "adaptation", "graphs", "charts", "tables", "report",
@@ -256,77 +256,162 @@ async function generateConversationSummary(messages, geminiApiKey) {
   }
 }
 
-// Function to generate a context-aware system message
-async function generateContextAwareSystemMessage(thread, messages, currentQuery, geminiApiKey) {
-  // Base system message
-  let systemMessage = `You are Leaf, a helpful AI expert assistant specialized in climate change mitigation and research, developed by APCTT. Your responses are thoughtful, engaging, detailed, and informative. You are in a conversation thread titled "${thread.title}". You cannot answer questions outside of the climate science domain.`;
+// Function to analyze message type
+async function analyzeMessageType(message, previousMessage) {
+  if (!previousMessage) return 'initial'
   
-  // Check if we have the thread in cache
-  if (conversationCache.has(thread.id)) {
-    const cachedData = conversationCache.get(thread.id)
-    
-    systemMessage += `\n\nThis is a continuing conversation. Here's what we've discussed so far:`
-    
-    if (cachedData.summary) {
-      systemMessage += `\n\nCONVERSATION SUMMARY: ${cachedData.summary}`
-    }
-    
-    if (cachedData.keyTopics && cachedData.keyTopics.length > 0) {
-      systemMessage += `\n\nKEY TOPICS: ${cachedData.keyTopics.join(', ')}`
-    }
-    
-    // Find relevant previous messages
-    const relevantMessages = await findRelevantPreviousMessages(messages, currentQuery, geminiApiKey)
-    if (relevantMessages.length > 0) {
-      systemMessage += `\n\nRELEVANT PREVIOUS MESSAGES:`
-      relevantMessages.forEach((msg, idx) => {
-        systemMessage += `\n\n${msg.role.toUpperCase()}: ${msg.content.slice(0, 300)}${msg.content.length > 300 ? '...' : ''}`
-      })
-    }
-  } else {
-    // Initialize cache for this thread
-    const summary = await generateConversationSummary(messages, geminiApiKey)
-    const keyTopics = await extractKeyTopics(messages, geminiApiKey)
-    
-    conversationCache.set(thread.id, {
-      summary,
-      keyTopics,
-      userPreferences: null,
-      lastUpdated: new Date(),
-    })
-    
-    if (summary) {
-      systemMessage += `\n\nCONVERSATION SUMMARY: ${summary}`
-    }
-    
-    if (keyTopics && keyTopics.length > 0) {
-      systemMessage += `\n\nKEY TOPICS: ${keyTopics.join(', ')}`
+  const patterns = {
+    followup: ['more', 'continue', 'elaborate', 'tell me more', 'what about', 'and', 'also', 'additionally'],
+    clarification: ['what do you mean', 'could you explain', 'i dont understand', 'clarify', 'what is', 'how does'],
+    disagreement: ['but', 'however', 'disagree', 'not true', 'incorrect', 'wrong'],
+    agreement: ['yes', 'agree', 'exactly', 'true', 'right', 'correct'],
+  }
+  
+  const lowercaseMsg = message.toLowerCase()
+  for (const [type, keywords] of Object.entries(patterns)) {
+    if (keywords.some(keyword => lowercaseMsg.includes(keyword))) {
+      return type
     }
   }
   
+  return 'question'
+}
+
+// Enhanced function to generate context-aware system message
+async function generateContextAwareSystemMessage(thread, messages, currentQuery, geminiApiKey) {
+  let systemMessage = `You are Leaf, a helpful AI expert assistant specialized in climate change mitigation and research, developed by APCTT. Your responses should be thoughtful, engaging, detailed, and informative, while maintaining a natural conversational flow. You are in a conversation thread titled "${thread.title}".
+
+IMPORTANT CONVERSATION GUIDELINES:
+1. Always maintain continuity with previous messages
+2. Reference previous points when relevant
+3. Use natural transitions between topics
+4. Acknowledge user's previous statements/questions
+5. Stay focused on the climate science domain
+6. Be empathetic and understanding
+7. Use conversational language while maintaining professionalism
+8. If continuing a previous topic, explicitly acknowledge it
+9. If changing topics, use smooth transitions
+10. Maintain consistent terminology throughout the conversation`
+
+  // Get conversation context from database and cache
+  const dbThread = await prisma.thread.findUnique({
+    where: { id: thread.id },
+    include: {
+      lastMessage: true,
+      messages: {
+        orderBy: { createdAt: 'desc' },
+        take: 10
+      }
+    }
+  })
+
+  if (dbThread.lastContext) {
+    systemMessage += `\n\nPREVIOUS CONTEXT: ${dbThread.lastContext}`
+  }
+
+  if (dbThread.keyTopics && dbThread.keyTopics.length > 0) {
+    systemMessage += `\n\nKEY TOPICS IN THIS THREAD: ${dbThread.keyTopics.join(', ')}`
+  }
+
+  // Get cached data
+  const cachedData = conversationCache.get(thread.id) || {}
+  
+  // Analyze message type
+  const messageType = await analyzeMessageType(currentQuery, dbThread.lastMessage?.content)
+  
+  // Add message type context
+  systemMessage += `\n\nCURRENT MESSAGE TYPE: ${messageType}`
+  
+  // Find relevant previous messages with enhanced context
+  const relevantMessages = await findRelevantPreviousMessages(messages, currentQuery, geminiApiKey)
+  if (relevantMessages.length > 0) {
+    systemMessage += `\n\nRELEVANT PREVIOUS EXCHANGES:\n`
+    relevantMessages.forEach((msg, idx) => {
+      const truncatedContent = msg.content.slice(0, 500)
+      systemMessage += `\n[${msg.role.toUpperCase()}]: ${truncatedContent}${msg.content.length > 500 ? '...' : ''}`
+    })
+  }
+
+  // Add conversation flow guidance based on message type
+  const flowGuidance = {
+    followup: "Continue the previous discussion, building upon the last response while adding new insights.",
+    clarification: "Provide a clearer explanation of the previous point, using different wording and examples.",
+    disagreement: "Address the user's concerns respectfully while providing evidence-based explanations.",
+    agreement: "Acknowledge the agreement and expand on the topic with additional relevant information.",
+    question: "Provide a comprehensive answer while connecting it to any relevant previous discussion points.",
+    initial: "Start a new discussion thread while being ready to connect it to any relevant previous topics."
+  }
+
+  systemMessage += `\n\nCONVERSATION FLOW GUIDANCE: ${flowGuidance[messageType]}`
+
+  // Add recent emotional context if available
+  if (cachedData.emotionalContext) {
+    systemMessage += `\n\nUSER EMOTIONAL CONTEXT: ${cachedData.emotionalContext}`
+  }
+
   return systemMessage
 }
 
-// Function to update conversation cache
+// Enhanced function to update conversation cache
 async function updateConversationCache(threadId, messages, geminiApiKey) {
-  // Only update if cache exists and it's been at least 5 minutes since last update
-  if (conversationCache.has(threadId)) {
-    const cachedData = conversationCache.get(threadId)
-    const now = new Date()
-    const timeDiff = now - cachedData.lastUpdated
+  const now = new Date()
+  const cachedData = conversationCache.get(threadId) || {}
+  const timeDiff = cachedData.lastUpdated ? now - cachedData.lastUpdated : Infinity
+  
+  // Update every 2 minutes or if cache doesn't exist
+  if (timeDiff > 2 * 60 * 1000 || !cachedData.lastUpdated) {
+    const summary = await generateConversationSummary(messages, geminiApiKey)
+    const keyTopics = await extractKeyTopics(messages, geminiApiKey)
     
-    // Update every 5 minutes
-    if (timeDiff > 5 * 60 * 1000) {
-      const summary = await generateConversationSummary(messages, geminiApiKey)
-      const keyTopics = await extractKeyTopics(messages, geminiApiKey)
-      
-      conversationCache.set(threadId, {
-        ...cachedData,
-        summary: summary || cachedData.summary,
-        keyTopics: keyTopics || cachedData.keyTopics,
-        lastUpdated: now,
-      })
-    }
+    // Analyze emotional context from recent messages
+    const emotionalContext = await analyzeEmotionalContext(messages.slice(-3), geminiApiKey)
+    
+    // Update database
+    await prisma.thread.update({
+      where: { id: threadId },
+      data: {
+        lastContext: summary,
+        keyTopics,
+        lastMessageId: messages[messages.length - 1]?.id
+      }
+    })
+    
+    // Update cache
+    conversationCache.set(threadId, {
+      summary,
+      keyTopics,
+      emotionalContext,
+      lastUpdated: now,
+      recentTopics: messages.slice(-5).map(m => m.content).join(' ') // For quick keyword matching
+    })
+  }
+}
+
+// New function to analyze emotional context
+async function analyzeEmotionalContext(recentMessages, geminiApiKey) {
+  if (!recentMessages || recentMessages.length === 0) return null
+  
+  try {
+    const geminiModel = new ChatGoogleGenerativeAI({
+      apiKey: geminiApiKey,
+      model: "gemini-2.0-flash",
+      temperature: 0.1,
+    })
+
+    const messageText = recentMessages
+      .filter(m => m.role === 'user')
+      .map(m => m.content)
+      .join('\n')
+
+    const response = await geminiModel.invoke([
+      ["system", "Analyze the emotional context and engagement level in these messages. Return a brief description of the user's apparent emotional state and engagement level."],
+      ["human", messageText],
+    ])
+
+    return response.content
+  } catch (error) {
+    console.error('Failed to analyze emotional context:', error)
+    return null
   }
 }
 
@@ -359,6 +444,34 @@ function getOptimalConversationHistory(messages, currentQuery) {
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
   
   return selectedMessages.map(msg => [`${msg.role === 'user' ? 'human' : 'assistant'}`, msg.content])
+}
+
+// Add this new function for calculating relevance score
+async function calculateRelevanceScore(message, thread, geminiApiKey) {
+  if (!thread.messages || thread.messages.length === 0) return 1.0 // First message in thread
+  
+  try {
+    const geminiModel = new ChatGoogleGenerativeAI({
+      apiKey: geminiApiKey,
+      model: "gemini-2.0-flash",
+      temperature: 0.1,
+    })
+
+    // Get the last few messages for context
+    const recentMessages = thread.messages.slice(-3)
+    const contextText = recentMessages.map(m => m.content).join('\n')
+    
+    const response = await geminiModel.invoke([
+      ["system", "Analyze the semantic relevance between the new message and recent conversation context. Return a single number between 0 and 1, where 1 means highly relevant and 0 means completely unrelated."],
+      ["human", `Context:\n${contextText}\n\nNew message:\n${message}\n\nRelevance score (0-1):`]
+    ])
+    
+    const score = parseFloat(response.content)
+    return isNaN(score) ? 0.5 : score // Default to 0.5 if parsing fails
+  } catch (error) {
+    console.error('Failed to calculate relevance score:', error)
+    return 0.5 // Default score on error
+  }
 }
 
 export default defineEventHandler(async (event) => {
@@ -443,28 +556,31 @@ export default defineEventHandler(async (event) => {
         }
       }
 
-      // Initialize models for different scenarios
-      const leafBaseModel = new ChatGoogleGenerativeAI({
+      // Before generating the AI response, get enhanced context
+      const systemMessage = await generateContextAwareSystemMessage(thread, thread.messages, message, config.geminiApiKey)
+
+      // Use different temperature based on message type
+      const messageType = await analyzeMessageType(message, thread.messages[thread.messages.length - 1]?.content)
+      const temperature = {
+        followup: 0.3,
+        clarification: 0.1,
+        disagreement: 0.2,
+        agreement: 0.4,
+        question: 0.3,
+        initial: 0.4
+      }[messageType] || 0.3
+
+      // Initialize model with dynamic temperature
+      const leafModel = new ChatGoogleGenerativeAI({
         apiKey: config.geminiApiKey,
         model: "gemini-2.0-flash",
-        temperature: 0.2,
-        maxRetries: 2,
-      })
-
-      const leafThinkingModel = new ChatGoogleGenerativeAI({
-        apiKey: config.geminiApiKey,
-        model: "gemini-2.0-flash-thinking-exp-01-21",
-        temperature: 0,
-        maxRetries: 2,
+        temperature: temperature,
       })
 
       // Initialize Tavily if needed
       if (enableWebSearch && requiresResearch(message)) {
         initTavily(config.tavilyApiKey)
       }
-
-      // Get context-aware system message using Gemini
-      const systemMessage = await generateContextAwareSystemMessage(thread, thread.messages, message, config.geminiApiKey)
 
       // Get the most relevant conversation history
       const conversationHistory = getOptimalConversationHistory(thread.messages, message)
@@ -479,7 +595,7 @@ export default defineEventHandler(async (event) => {
         // Just use the base model for casual conversation
         processingState = 'casual-conversation'
         
-        const response = await leafBaseModel.invoke([
+        const response = await leafModel.invoke([
           ["system", systemMessage],
           ...conversationHistory,
           ["human", pdfContent ? `${message}\n\nI've also uploaded a PDF that contains the following information: ${pdfContent.slice(0, 2000)}${pdfContent.length > 2000 ? '...' : ''}` : message],
@@ -506,7 +622,7 @@ export default defineEventHandler(async (event) => {
         }
 
         // Step 2: Get an Initial Answer from Leaf base model
-        const initialResponse = await leafBaseModel.invoke([
+        const initialResponse = await leafModel.invoke([
           ["system", systemMessage],
           ...conversationHistory,
           ["human", pdfContent ? `${message}\n\nI've also uploaded a PDF that contains the following information: ${pdfContent.slice(0, 2000)}${pdfContent.length > 2000 ? '...' : ''}` : message],
@@ -552,7 +668,7 @@ Your answer must include:
 Ensure the answer is structured and clear, similar to a well-designed blog post or textbook explanation.`;
 
         // Step 4: Synthesize the Final Answer Using Leaf Thinking
-        const finalResponse = await leafThinkingModel.invoke([
+        const finalResponse = await leafModel.invoke([
           ["system", systemMessage],
           ["human", combinedContext]
         ])
@@ -570,7 +686,7 @@ Ensure the answer is structured and clear, similar to a well-designed blog post 
         // For general questions (not casual, not research)
         processingState = 'general-question'
         
-        const response = await leafBaseModel.invoke([
+        const response = await leafModel.invoke([
           ["system", systemMessage],
           ...conversationHistory,
           ["human", pdfContent ? `${message}\n\nI've also uploaded a PDF that contains the following information: ${pdfContent.slice(0, 2000)}${pdfContent.length > 2000 ? '...' : ''}` : message],
@@ -579,17 +695,23 @@ Ensure the answer is structured and clear, similar to a well-designed blog post 
         aiResponse = response.content
       }
 
+      // Calculate relevance score
+      const relevanceScore = await calculateRelevanceScore(message, thread, config.geminiApiKey)
+
       // Save AI response to database
       const savedMessage = await prisma.message.create({
         data: {
           content: aiResponse,
           role: 'assistant',
           threadId,
-          userId: decoded.id
+          userId: decoded.id,
+          messageType,
+          parentMsgId: userMessage.id,
+          contextScore: relevanceScore
         }
       })
       
-      // Update conversation cache with latest context
+      // After generating response, update cache and database
       await updateConversationCache(threadId, [...thread.messages, userMessage, savedMessage], config.geminiApiKey)
 
       // Return messages with web search data and processing state
