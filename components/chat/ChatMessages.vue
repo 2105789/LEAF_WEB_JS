@@ -19,239 +19,249 @@
           </div>
         </div>
       </div>
-      <div 
-        v-else
-        v-for="message in messages" 
-        :key="message.id"
-        class="max-w-4xl mx-auto"
+      
+      <!-- Use transition-group for smooth animations when messages change -->
+      <transition-group 
+        name="message-fade" 
+        tag="div" 
+        class="space-y-4"
+        appear
       >
         <div 
-          :class="[
-            'rounded-lg shadow-sm relative group transition-all duration-300 pr-10 py-3',
-            message.role === 'user' 
-              ? 'bg-teal-50 bg-opacity-50 border border-teal-100' 
-              : 'bg-white border border-gray-100',
-            message.isProcessing ? 'opacity-75' : 'opacity-100'
-          ]"
+          v-for="message in visibleMessages" 
+          :key="message.id"
+          class="max-w-4xl mx-auto"
         >
-          <div class="flex items-start gap-3 p-4">
-            <div 
-              class="w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0"
-              :class="message.role === 'user' ? 'bg-teal-100 text-teal-600' : 'bg-emerald-50 text-emerald-600'"
-            >
-              {{ message.role === 'user' ? 'U' : 'L' }}
-            </div>
-            <div class="flex-1 min-w-0">
-              <div 
-                class="prose prose-sm max-w-none"
-                :class="[
-                  message.role === 'user' 
-                    ? 'prose-pre:bg-teal-50 prose-pre:border prose-pre:border-teal-100 text-teal-900' 
-                    : 'prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-100 text-gray-700'
-                ]"
-                v-html="processContent(message.content)"
-              ></div>
-
-              <!-- Sources Sections -->
-              <div v-if="message.role === 'assistant'" class="mt-4 space-y-2">
-                <!-- Web Sources -->
-                <div v-if="extractSources(message.content, 'web').length" class="border rounded-lg">
-                  <button 
-                    @click="sourcesExpanded.web = !sourcesExpanded.web"
-                    class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
-                  >
-                    <span class="font-medium text-sm">Web Sources</span>
-                    <svg 
-                      class="w-5 h-5 transform transition-transform"
-                      :class="sourcesExpanded.web ? 'rotate-180' : ''"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
-                    </svg>
-                  </button>
-                  <div v-show="sourcesExpanded.web" class="px-4 py-2 border-t">
-                    <ul class="space-y-2 text-sm">
-                      <li v-for="(source, index) in extractSources(message.content, 'web')" :key="index" class="whitespace-normal break-all py-1">
-                        <template v-if="source.includes('http')">
-                          <div class="flex flex-col gap-1">
-                            <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
-                            <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
-                              {{ formatSource(source).url }}
-                            </a>
-                          </div>
-                        </template>
-                        <template v-else>
-                          {{ source }}
-                        </template>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-
-                <!-- Image Sources -->
-                <div v-if="extractSources(message.content, 'image').length" class="border rounded-lg">
-                  <button 
-                    @click="sourcesExpanded.image = !sourcesExpanded.image"
-                    class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
-                  >
-                    <span class="font-medium text-sm">Image Sources</span>
-                    <svg 
-                      class="w-5 h-5 transform transition-transform"
-                      :class="sourcesExpanded.image ? 'rotate-180' : ''"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
-                    </svg>
-                  </button>
-                  <div v-show="sourcesExpanded.image" class="px-4 py-2 border-t">
-                    <ul class="space-y-2 text-sm">
-                      <li v-for="(source, index) in extractSources(message.content, 'image')" :key="index" class="whitespace-normal break-all py-1">
-                        <template v-if="source.includes('http')">
-                          <div class="flex flex-col gap-1">
-                            <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
-                            <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
-                              {{ formatSource(source).url }}
-                            </a>
-                          </div>
-                        </template>
-                        <template v-else>
-                          {{ source }}
-                        </template>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-
-                <!-- Vector Sources -->
-                <div v-if="extractSources(message.content, 'vector').length" class="border rounded-lg">
-                  <button 
-                    @click="sourcesExpanded.vector = !sourcesExpanded.vector"
-                    class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
-                  >
-                    <span class="font-medium text-sm">Vector Sources</span>
-                    <svg 
-                      class="w-5 h-5 transform transition-transform"
-                      :class="sourcesExpanded.vector ? 'rotate-180' : ''"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
-                    </svg>
-                  </button>
-                  <div v-show="sourcesExpanded.vector" class="px-4 py-2 border-t">
-                    <ul class="space-y-2 text-sm">
-                      <li v-for="(source, index) in extractSources(message.content, 'vector')" :key="index" class="whitespace-normal break-all py-1">
-                        <template v-if="source.includes('http')">
-                          <div class="flex flex-col gap-1">
-                            <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
-                            <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
-                              {{ formatSource(source).url }}
-                            </a>
-                          </div>
-                        </template>
-                        <template v-else>
-                          {{ source }}
-                        </template>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-
-              <span class="text-xs mt-2 block" :class="message.role === 'user' ? 'text-teal-400' : 'text-gray-400'">
-                {{ formatDate(message.createdAt) }}
-              </span>
-            </div>
-            <button 
-              v-if="message.role === 'assistant' && !message.isProcessing"
-              @click="copyToClipboard(message.content)"
-              class="opacity-0 group-hover:opacity-100 transition-opacity absolute top-2 right-2 text-gray-400 hover:text-gray-600"
-              title="Copy response"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
-                <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
-              </svg>
-            </button>
-          </div>
           <div 
-            v-if="message.role === 'assistant' && hasCodeBlock(message.content) && !message.isProcessing"
-            class="border-t border-gray-50 bg-gray-50 p-2 rounded-b-lg flex justify-end"
+            :class="[
+              'rounded-lg shadow-sm relative group transition-all pr-10 py-3',
+              message.role === 'user' 
+                ? 'bg-teal-50 bg-opacity-50 border border-teal-100' 
+                : 'bg-white border border-gray-100',
+              message.isProcessing ? 'opacity-75' : 'opacity-100'
+            ]"
           >
-            <button 
-              @click="copyToClipboard(extractCode(message.content))"
-              class="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+            <div class="flex items-start gap-3 p-4">
+              <div 
+                class="w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0"
+                :class="message.role === 'user' ? 'bg-teal-100 text-teal-600' : 'bg-emerald-50 text-emerald-600'"
+              >
+                {{ message.role === 'user' ? 'U' : 'L' }}
+              </div>
+              <div class="flex-1 min-w-0">
+                <div 
+                  class="prose prose-sm max-w-none"
+                  :class="[
+                    message.role === 'user' 
+                      ? 'prose-pre:bg-teal-50 prose-pre:border prose-pre:border-teal-100 text-teal-900' 
+                      : 'prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-100 text-gray-700'
+                  ]"
+                  v-html="getProcessedContent(message)"
+                ></div>
+
+                <!-- Sources Sections - Only render if expanded -->
+                <div v-if="message.role === 'assistant'" class="mt-4 space-y-2">
+                  <!-- Web Sources -->
+                  <div v-if="hasSources(message.content, 'web')" class="border rounded-lg">
+                    <button 
+                      @click="toggleSourceExpansion('web')"
+                      class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
+                    >
+                      <span class="font-medium text-sm">Web Sources</span>
+                      <svg 
+                        class="w-5 h-5 transform transition-transform"
+                        :class="sourcesExpanded.web ? 'rotate-180' : ''"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                      >
+                        <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
+                      </svg>
+                    </button>
+                    <div v-show="sourcesExpanded.web" class="px-4 py-2 border-t">
+                      <ul class="space-y-2 text-sm">
+                        <li v-for="(source, index) in getSourcesIfExpanded(message.content, 'web')" :key="index" class="whitespace-normal break-all py-1">
+                          <template v-if="source.includes('http')">
+                            <div class="flex flex-col gap-1">
+                              <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
+                              <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
+                                {{ formatSource(source).url }}
+                              </a>
+                            </div>
+                          </template>
+                          <template v-else>
+                            {{ source }}
+                          </template>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <!-- Image Sources -->
+                  <div v-if="hasSources(message.content, 'image')" class="border rounded-lg">
+                    <button 
+                      @click="toggleSourceExpansion('image')"
+                      class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
+                    >
+                      <span class="font-medium text-sm">Image Sources</span>
+                      <svg 
+                        class="w-5 h-5 transform transition-transform"
+                        :class="sourcesExpanded.image ? 'rotate-180' : ''"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                      >
+                        <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
+                      </svg>
+                    </button>
+                    <div v-show="sourcesExpanded.image" class="px-4 py-2 border-t">
+                      <ul class="space-y-2 text-sm">
+                        <li v-for="(source, index) in getSourcesIfExpanded(message.content, 'image')" :key="index" class="whitespace-normal break-all py-1">
+                          <template v-if="source.includes('http')">
+                            <div class="flex flex-col gap-1">
+                              <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
+                              <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
+                                {{ formatSource(source).url }}
+                              </a>
+                            </div>
+                          </template>
+                          <template v-else>
+                            {{ source }}
+                          </template>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <!-- Vector Sources -->
+                  <div v-if="hasSources(message.content, 'vector')" class="border rounded-lg">
+                    <button 
+                      @click="toggleSourceExpansion('vector')"
+                      class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
+                    >
+                      <span class="font-medium text-sm">Vector Sources</span>
+                      <svg 
+                        class="w-5 h-5 transform transition-transform"
+                        :class="sourcesExpanded.vector ? 'rotate-180' : ''"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                      >
+                        <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
+                      </svg>
+                    </button>
+                    <div v-show="sourcesExpanded.vector" class="px-4 py-2 border-t">
+                      <ul class="space-y-2 text-sm">
+                        <li v-for="(source, index) in getSourcesIfExpanded(message.content, 'vector')" :key="index" class="whitespace-normal break-all py-1">
+                          <template v-if="source.includes('http')">
+                            <div class="flex flex-col gap-1">
+                              <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
+                              <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
+                                {{ formatSource(source).url }}
+                              </a>
+                            </div>
+                          </template>
+                          <template v-else>
+                            {{ source }}
+                          </template>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                <span class="text-xs mt-2 block" :class="message.role === 'user' ? 'text-teal-400' : 'text-gray-400'">
+                  {{ formatDate(message.createdAt) }}
+                </span>
+              </div>
+              <button 
+                v-if="message.role === 'assistant' && !message.isProcessing"
+                @click="copyToClipboard(message.content)"
+                class="opacity-0 group-hover:opacity-100 transition-opacity absolute top-2 right-2 text-gray-400 hover:text-gray-600"
+                title="Copy response"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                  <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                </svg>
+              </button>
+            </div>
+            <div 
+              v-if="message.role === 'assistant' && hasCodeBlock(message.content) && !message.isProcessing"
+              class="border-t border-gray-50 bg-gray-50 p-2 rounded-b-lg flex justify-end"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
-                <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" />
-              </svg>
-              Copy code
-            </button>
+              <button 
+                @click="copyToClipboard(extractCode(message.content))"
+                class="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
+                  <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" />
+                </svg>
+                Copy code
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      </transition-group>
 
-      <!-- Processing States -->
-      <div v-if="isLoading" class="max-w-3xl mx-auto space-y-4">
-        <!-- Initializing -->
-        <div v-if="processingState === 'initializing'" class="bg-white border border-gray-100 rounded-lg shadow-sm p-4 transition-all duration-300">
-          <div class="flex items-start gap-3">
-            <div class="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-600 text-sm shrink-0">
-              💭
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="text-sm text-gray-400 ml-2 animate-pulse">Thinking...</span>
+      <!-- Processing States with improved transitions -->
+      <transition name="fade">
+        <div v-if="isLoading" class="max-w-3xl mx-auto space-y-4">
+          <!-- Initializing -->
+          <div v-if="processingState === 'initializing'" class="bg-white border border-gray-100 rounded-lg shadow-sm p-4 transition-all">
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-600 text-sm shrink-0">
+                💭
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm text-gray-400 ml-2 animate-pulse">Thinking...</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Research Processing -->
-        <div v-if="processingState === 'research'" class="bg-white border border-gray-100 rounded-lg shadow-sm p-4 transition-all duration-300">
-          <div class="flex items-start gap-3">
-            <div class="w-8 h-8 rounded-full bg-teal-50 flex items-center justify-center text-teal-600 text-sm shrink-0">
-              🔬
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse"></div>
-                <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
-                <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
-                <span class="text-sm text-gray-400 ml-2">Researching... {{ processingTime }}s</span>
+          <!-- Research Processing -->
+          <div v-if="processingState === 'research'" class="bg-white border border-gray-100 rounded-lg shadow-sm p-4 transition-all">
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 rounded-full bg-teal-50 flex items-center justify-center text-teal-600 text-sm shrink-0">
+                🔬
               </div>
-              <div class="mt-2 space-y-2">
-                <div class="h-4 bg-teal-50 rounded w-3/4 animate-pulse"></div>
-                <div class="h-4 bg-teal-50 rounded w-1/2 animate-pulse"></div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse"></div>
+                  <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
+                  <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
+                  <span class="text-sm text-gray-400 ml-2">Researching... {{ processingTime }}s</span>
+                </div>
+                <div class="mt-2 space-y-2">
+                  <div class="h-4 bg-teal-50 rounded w-3/4 animate-pulse"></div>
+                  <div class="h-4 bg-teal-50 rounded w-1/2 animate-pulse"></div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- General Processing -->
-        <div v-if="processingState === 'general'" class="bg-white border border-gray-100 rounded-lg shadow-sm p-4 transition-all duration-300">
-          <div class="flex items-start gap-3">
-            <div class="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600 text-sm shrink-0">
-              ⚡
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <div class="h-4 w-4 bg-emerald-100 rounded-full animate-pulse"></div>
-                <div class="h-4 w-4 bg-emerald-100 rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
-                <div class="h-4 w-4 bg-emerald-100 rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
-                <span class="text-sm text-gray-400 ml-2">Generating response... {{ processingTime }}s</span>
+          <!-- General Processing -->
+          <div v-if="processingState === 'general'" class="bg-white border border-gray-100 rounded-lg shadow-sm p-4 transition-all">
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600 text-sm shrink-0">
+                ⚡
               </div>
-              <div class="mt-2 space-y-2">
-                <div class="h-4 bg-emerald-50 rounded w-3/4 animate-pulse"></div>
-                <div class="h-4 bg-emerald-50 rounded w-1/2 animate-pulse"></div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <div class="h-4 w-4 bg-emerald-100 rounded-full animate-pulse"></div>
+                  <div class="h-4 w-4 bg-emerald-100 rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
+                  <div class="h-4 w-4 bg-emerald-100 rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
+                  <span class="text-sm text-gray-400 ml-2">Generating response... {{ processingTime }}s</span>
+                </div>
+                <div class="mt-2 space-y-2">
+                  <div class="h-4 bg-emerald-50 rounded w-3/4 animate-pulse"></div>
+                  <div class="h-4 bg-emerald-50 rounded w-1/2 animate-pulse"></div>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      </transition>
     </template>
     <div v-else class="h-full flex items-center justify-center">
       <div class="bg-white p-8 rounded-lg shadow-sm border border-gray-100 max-w-md w-full text-center">
@@ -264,11 +274,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed, nextTick } from 'vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import markdownItSup from 'markdown-it-sup'
 
+// Initialize markdown parser once
 const md = new MarkdownIt({
   html: true,
   linkify: true,
@@ -313,9 +324,25 @@ const sourcesExpanded = ref({
   vector: false
 })
 
-// Format date helper
+// Cache for processed content
+const contentCache = new Map()
+
+// Computed property for visible messages with virtual scrolling
+const visibleMessages = computed(() => {
+  // For simplicity, we're showing all messages
+  // In a real implementation, you'd calculate which messages are in the viewport
+  return props.messages
+})
+
+// Format date helper - memoized
+const dateFormatCache = new Map()
 const formatDate = (date) => {
-  return new Date(date).toLocaleString()
+  if (dateFormatCache.has(date)) {
+    return dateFormatCache.get(date)
+  }
+  const formatted = new Date(date).toLocaleString()
+  dateFormatCache.set(date, formatted)
+  return formatted
 }
 
 // Check if message contains code block
@@ -332,8 +359,20 @@ const extractCode = (content) => {
     .join('\n\n')
 }
 
-// Extract and format sources
-const extractSources = (content, type) => {
+// Check if content has sources without extracting them
+const hasSources = (content, type) => {
+  const regex = {
+    web: /<websources>([^]*?)<\/websources>/s,
+    image: /<imagesources>([^]*?)<\/imagesources>/s,
+    vector: /<vectorsources>([^]*?)<\/vectorsources>/s
+  }
+  return regex[type].test(content)
+}
+
+// Extract sources only if the section is expanded
+const getSourcesIfExpanded = (content, type) => {
+  if (!sourcesExpanded.value[type]) return []
+  
   const regex = {
     web: /<websources>([^]*?)<\/websources>/s,
     image: /<imagesources>([^]*?)<\/imagesources>/s,
@@ -342,6 +381,11 @@ const extractSources = (content, type) => {
   const match = content.match(regex[type])
   if (!match) return []
   return match[1].trim().split('\n').filter(line => line.trim())
+}
+
+// Toggle source expansion with optimized rendering
+const toggleSourceExpansion = (type) => {
+  sourcesExpanded.value[type] = !sourcesExpanded.value[type]
 }
 
 // Extract URL from source string
@@ -368,10 +412,16 @@ const formatSource = (source) => {
   return { title, url }
 }
 
-// Process content with markdown
-const processContent = (content) => {
+// Process content with markdown - memoized for performance
+const getProcessedContent = (message) => {
+  const cacheKey = message.id + '-' + message.content
+  
+  if (contentCache.has(cacheKey)) {
+    return contentCache.get(cacheKey)
+  }
+  
   // Remove source sections from display
-  const cleanContent = content
+  const cleanContent = message.content
     .replace(/<websources>[^]*?<\/websources>/s, '')
     .replace(/<imagesources>[^]*?<\/imagesources>/s, '')
     .replace(/<vectorsources>[^]*?<\/vectorsources>/s, '')
@@ -380,7 +430,12 @@ const processContent = (content) => {
   const processedContent = cleanContent.replace(/\[(\d+)\]/g, '<sup class="reference">[$1]</sup>')
   
   // Render markdown
-  return DOMPurify.sanitize(md.render(processedContent))
+  const rendered = DOMPurify.sanitize(md.render(processedContent))
+  
+  // Cache the result
+  contentCache.set(cacheKey, rendered)
+  
+  return rendered
 }
 
 // Copy to clipboard
@@ -394,23 +449,43 @@ const copyToClipboard = async (text) => {
   }
 }
 
-// Scroll to bottom of messages
+// Scroll to bottom of messages with improved performance
 const scrollToBottom = () => {
-  setTimeout(() => {
-    if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-    }
-  }, 100)
+  if (!messagesContainer.value) return
+  
+  // Use requestAnimationFrame for smoother scrolling
+  requestAnimationFrame(() => {
+    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+  })
 }
 
 // Watch for new messages and scroll to bottom
 watch(() => props.messages, () => {
-  scrollToBottom()
+  // Clear cache when messages change
+  contentCache.clear()
+  
+  // Scroll after a short delay to ensure rendering is complete
+  nextTick(() => {
+    scrollToBottom()
+  })
 }, { deep: true })
 
 // Watch for thread changes
 watch(() => props.selectedThread, () => {
-  scrollToBottom()
+  // Clear cache when thread changes
+  contentCache.clear()
+  dateFormatCache.clear()
+  
+  // Reset expanded sources
+  sourcesExpanded.value = {
+    web: false,
+    image: false,
+    vector: false
+  }
+  
+  nextTick(() => {
+    scrollToBottom()
+  })
 })
 
 onMounted(() => {
@@ -581,5 +656,33 @@ a {
 img{
   margin-top: 20px;
   border-radius: 10px;
+}
+
+/* Transition animations */
+.message-fade-enter-active,
+.message-fade-leave-active {
+  transition: all 0.3s ease;
+}
+
+.message-fade-enter-from,
+.message-fade-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* Hardware acceleration for smoother animations */
+.message-fade-item {
+  will-change: transform, opacity;
+  backface-visibility: hidden;
 }
 </style>

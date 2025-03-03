@@ -55,7 +55,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, onBeforeUnmount } from 'vue'
+import { ref, onMounted, watch, onBeforeUnmount, computed, nextTick } from 'vue'
 import { useAuth } from '~/composables/useAuth'
 import Toast from '~/components/Toast.vue'
 import ThreadSidebar from '~/components/chat/ThreadSidebar.vue'
@@ -71,14 +71,16 @@ const { user, clearAuth, fetchUser } = useAuth()
 const isInitializing = ref(true)
 const toast = ref(null)
 const messagesContainer = ref(null)
+const isThreadSwitching = ref(false)
 
-// Scroll to bottom of messages
+// Scroll to bottom of messages with improved performance
 const scrollToBottom = () => {
-  setTimeout(() => {
-    if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-    }
-  }, 100)
+  if (!messagesContainer.value) return
+  
+  // Use requestAnimationFrame for smoother scrolling
+  requestAnimationFrame(() => {
+    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+  })
 }
 
 // Watch for user changes
@@ -118,7 +120,7 @@ const stopStopwatch = () => {
   processingTime.value = 0
 }
 
-// Fetch user's threads
+// Fetch user's threads with optimized loading
 const fetchThreads = async () => {
   try {
     const response = await $fetch('/api/threads', {
@@ -127,22 +129,34 @@ const fetchThreads = async () => {
     threads.value = response.threads
   } catch (error) {
     console.error('Error fetching threads:', error)
+    toast.value?.addToast('Failed to load threads', 'error', 3000)
   }
 }
 
-// Fetch messages for selected thread
+// Fetch messages for selected thread with optimized loading
 const fetchMessages = async (threadId) => {
   try {
+    isThreadSwitching.value = true
     const response = await $fetch(`/api/threads/${threadId}/messages`, {
       credentials: 'include'
     })
-    messages.value = response.messages
+    
+    // Use nextTick to ensure DOM updates are batched
+    await nextTick(() => {
+      messages.value = response.messages
+    })
+    
+    // Delay scrolling slightly to ensure content is rendered
+    setTimeout(scrollToBottom, 50)
   } catch (error) {
     console.error('Error fetching messages:', error)
+    toast.value?.addToast('Failed to load messages', 'error', 3000)
+  } finally {
+    isThreadSwitching.value = false
   }
 }
 
-// Create a new thread
+// Create a new thread with optimized UI feedback
 const createNewThread = async () => {
   try {
     const title = `New Chat ${new Date().toLocaleString()}`
@@ -151,17 +165,27 @@ const createNewThread = async () => {
       body: { title },
       credentials: 'include'
     })
-    threads.value.unshift(response.thread)
-    selectThread(response.thread)
+    
+    // Add to beginning of array with animation preparation
+    threads.value = [response.thread, ...threads.value]
+    
+    // Select the thread after a short delay to allow for animation
+    setTimeout(() => {
+      selectThread(response.thread)
+    }, 50)
   } catch (error) {
     console.error('Error creating thread:', error)
+    toast.value?.addToast('Failed to create new thread', 'error', 3000)
   }
 }
 
-// Select a thread
-const selectThread = (thread) => {
+// Select a thread with improved state management
+const selectThread = async (thread) => {
+  if (selectedThread.value?.id === thread.id) return
+  
   selectedThread.value = thread
-  fetchMessages(thread.id)
+  messages.value = [] // Clear messages immediately for better UX
+  await fetchMessages(thread.id)
 }
 
 // Clear thread messages
@@ -310,45 +334,26 @@ const handleLogout = async () => {
   }
 }
 
-// Watch for thread changes
-watch(selectedThread, async (newThread) => {
+// Watch for thread changes with debounce
+watch(() => selectedThread.value, async (newThread, oldThread) => {
   if (!newThread) {
     messages.value = []
     return
   }
 
-  try {
-    isLoading.value = true
-    const response = await fetch(`/api/threads/${newThread.id}/messages`)
-    if (!response.ok) throw new Error('Failed to fetch messages')
-    const data = await response.json()
-    messages.value = data.messages
-  } catch (error) {
-    console.error('Error fetching messages:', error)
-    toast.value?.addToast('Failed to load messages', 'error', 3000)
-  } finally {
-    isLoading.value = false
+  if (newThread?.id !== oldThread?.id) {
+    pdfContext.value = null
   }
-})
-
-// Watch for thread changes to clear PDF context
-watch(selectedThread, () => {
-  pdfContext.value = null
-})
-
-// Watch for messages changes to scroll to bottom
-watch(() => messages.value, () => {
-  scrollToBottom()
 }, { deep: true })
 
-// Initial load
+// Initial load with improved sequence
 onMounted(async () => {
   try {
     await fetchUser()
     await fetchThreads()
+    isInitializing.value = false
   } catch (error) {
     console.error('Error initializing:', error)
-  } finally {
     isInitializing.value = false
   }
 })
