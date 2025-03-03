@@ -43,20 +43,123 @@
             </div>
             <div class="flex-1 min-w-0">
               <div 
-                v-if="message.role === 'assistant'"
-                class="prose prose-sm max-w-none prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-100"
+                class="prose prose-sm max-w-none"
                 :class="[
-                  message.role === 'user' ? 'text-teal-900' : 'text-gray-700',
-                  message.isProcessing ? 'opacity-75' : 'opacity-100'
+                  message.role === 'user' 
+                    ? 'prose-pre:bg-teal-50 prose-pre:border prose-pre:border-teal-100 text-teal-900' 
+                    : 'prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-100 text-gray-700'
                 ]"
-                v-html="markdownToHtml(message.content)"
+                v-html="processContent(message.content)"
               ></div>
-              <div 
-                v-else 
-                class="whitespace-pre-wrap text-teal-900"
-              >
-                {{ message.content }}
+
+              <!-- Sources Sections -->
+              <div v-if="message.role === 'assistant'" class="mt-4 space-y-2">
+                <!-- Web Sources -->
+                <div v-if="extractSources(message.content, 'web').length" class="border rounded-lg">
+                  <button 
+                    @click="sourcesExpanded.web = !sourcesExpanded.web"
+                    class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
+                  >
+                    <span class="font-medium text-sm">Web Sources</span>
+                    <svg 
+                      class="w-5 h-5 transform transition-transform"
+                      :class="sourcesExpanded.web ? 'rotate-180' : ''"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
+                    </svg>
+                  </button>
+                  <div v-show="sourcesExpanded.web" class="px-4 py-2 border-t">
+                    <ul class="space-y-2 text-sm">
+                      <li v-for="(source, index) in extractSources(message.content, 'web')" :key="index" class="whitespace-normal break-all py-1">
+                        <template v-if="source.includes('http')">
+                          <div class="flex flex-col gap-1">
+                            <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
+                            <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
+                              {{ formatSource(source).url }}
+                            </a>
+                          </div>
+                        </template>
+                        <template v-else>
+                          {{ source }}
+                        </template>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <!-- Image Sources -->
+                <div v-if="extractSources(message.content, 'image').length" class="border rounded-lg">
+                  <button 
+                    @click="sourcesExpanded.image = !sourcesExpanded.image"
+                    class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
+                  >
+                    <span class="font-medium text-sm">Image Sources</span>
+                    <svg 
+                      class="w-5 h-5 transform transition-transform"
+                      :class="sourcesExpanded.image ? 'rotate-180' : ''"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
+                    </svg>
+                  </button>
+                  <div v-show="sourcesExpanded.image" class="px-4 py-2 border-t">
+                    <ul class="space-y-2 text-sm">
+                      <li v-for="(source, index) in extractSources(message.content, 'image')" :key="index" class="whitespace-normal break-all py-1">
+                        <template v-if="source.includes('http')">
+                          <div class="flex flex-col gap-1">
+                            <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
+                            <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
+                              {{ formatSource(source).url }}
+                            </a>
+                          </div>
+                        </template>
+                        <template v-else>
+                          {{ source }}
+                        </template>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <!-- Vector Sources -->
+                <div v-if="extractSources(message.content, 'vector').length" class="border rounded-lg">
+                  <button 
+                    @click="sourcesExpanded.vector = !sourcesExpanded.vector"
+                    class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
+                  >
+                    <span class="font-medium text-sm">Vector Sources</span>
+                    <svg 
+                      class="w-5 h-5 transform transition-transform"
+                      :class="sourcesExpanded.vector ? 'rotate-180' : ''"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
+                    </svg>
+                  </button>
+                  <div v-show="sourcesExpanded.vector" class="px-4 py-2 border-t">
+                    <ul class="space-y-2 text-sm">
+                      <li v-for="(source, index) in extractSources(message.content, 'vector')" :key="index" class="whitespace-normal break-all py-1">
+                        <template v-if="source.includes('http')">
+                          <div class="flex flex-col gap-1">
+                            <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
+                            <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
+                              {{ formatSource(source).url }}
+                            </a>
+                          </div>
+                        </template>
+                        <template v-else>
+                          {{ source }}
+                        </template>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
               </div>
+
               <span class="text-xs mt-2 block" :class="message.role === 'user' ? 'text-teal-400' : 'text-gray-400'">
                 {{ formatDate(message.createdAt) }}
               </span>
@@ -162,8 +265,22 @@
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
-import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import MarkdownIt from 'markdown-it'
+import markdownItSup from 'markdown-it-sup'
+
+const md = new MarkdownIt({
+  html: true,
+  linkify: true,
+  breaks: true,
+  typographer: true
+}).use(markdownItSup)
+
+// Custom renderer for references
+md.renderer.rules.reference = (tokens, idx) => {
+  const token = tokens[idx]
+  return `<sup class="reference">[${token.meta.id}]</sup>`
+}
 
 const props = defineProps({
   messages: {
@@ -184,21 +301,21 @@ const props = defineProps({
   },
   processingState: {
     type: String,
-    default: 'web-search' // 'web-search', 'vector-search', 'ai-processing'
+    default: 'web-search'
   }
 })
 
 const emit = defineEmits(['copy-success', 'copy-error', 'submit'])
 const messagesContainer = ref(null)
+const sourcesExpanded = ref({
+  web: false,
+  image: false,
+  vector: false
+})
 
 // Format date helper
 const formatDate = (date) => {
   return new Date(date).toLocaleString()
-}
-
-// Markdown to HTML conversion
-const markdownToHtml = (content) => {
-  return DOMPurify.sanitize(marked(content))
 }
 
 // Check if message contains code block
@@ -213,6 +330,57 @@ const extractCode = (content) => {
   return matches
     .map(block => block.replace(/```(?:\w+)?\n([\s\S]*?)```/, '$1').trim())
     .join('\n\n')
+}
+
+// Extract and format sources
+const extractSources = (content, type) => {
+  const regex = {
+    web: /<websources>([^]*?)<\/websources>/s,
+    image: /<imagesources>([^]*?)<\/imagesources>/s,
+    vector: /<vectorsources>([^]*?)<\/vectorsources>/s
+  }
+  const match = content.match(regex[type])
+  if (!match) return []
+  return match[1].trim().split('\n').filter(line => line.trim())
+}
+
+// Extract URL from source string
+const extractUrl = (source) => {
+  const match = source.match(/(https?:\/\/[^\s]+)/)
+  return match ? match[1] : ''
+}
+
+// Extract title from source string
+const extractTitle = (source) => {
+  // Remove any leading [IX] index
+  const withoutIndex = source.replace(/^\[[^\]]+\]\s*/, '')
+  // Get the text before the URL
+  const url = extractUrl(source)
+  const titlePart = withoutIndex.split(url)[0].replace(/-\s*$/, '').trim()
+  // Limit to 30 characters
+  return titlePart.length > 30 ? titlePart.substring(0, 30) + '...' : titlePart
+}
+
+// Format source display
+const formatSource = (source) => {
+  const title = extractTitle(source)
+  const url = extractUrl(source)
+  return { title, url }
+}
+
+// Process content with markdown
+const processContent = (content) => {
+  // Remove source sections from display
+  const cleanContent = content
+    .replace(/<websources>[^]*?<\/websources>/s, '')
+    .replace(/<imagesources>[^]*?<\/imagesources>/s, '')
+    .replace(/<vectorsources>[^]*?<\/vectorsources>/s, '')
+    
+  // Convert references [n] to superscript
+  const processedContent = cleanContent.replace(/\[(\d+)\]/g, '<sup class="reference">[$1]</sup>')
+  
+  // Render markdown
+  return DOMPurify.sanitize(md.render(processedContent))
 }
 
 // Copy to clipboard
@@ -294,71 +462,124 @@ const handleSuggestionClick = (suggestion) => {
 </script>
 
 <style>
-/* Fade transition */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-/* Update markdown content styles */
-:deep(.prose) {
+/* Markdown content styles */
+.prose {
   @apply text-gray-700;
 }
 
-:deep(.prose pre) {
+.prose pre {
   @apply bg-gray-50 rounded-lg p-4 my-2 overflow-x-auto border border-gray-100;
 }
 
-:deep(.prose code) {
+.prose code {
   @apply bg-gray-50 rounded px-1 py-0.5 text-gray-700;
 }
 
-:deep(.prose pre code) {
+.prose pre code {
   @apply bg-transparent p-0;
 }
 
-:deep(.prose p) {
-  @apply my-2;
-}
 
-:deep(.prose ul) {
+.prose ul{
   @apply list-disc list-inside my-2;
 }
 
-:deep(.prose ol) {
+.prose ol {
   @apply list-decimal list-inside my-2;
 }
 
-:deep(.prose h1), :deep(.prose h2), :deep(.prose h3), :deep(.prose h4) {
+.prose h1, .prose h2, .prose h3, .prose h4 {
   @apply font-semibold my-3 text-gray-800;
 }
 
-:deep(.prose h1) {
+.prose h1 {
   @apply text-2xl;
 }
 
-:deep(.prose h2) {
+.prose h2 {
   @apply text-xl;
 }
-
-:deep(.prose h3) {
+    
+.prose h3 {
   @apply text-lg;
 }
 
-a {
-  @apply text-blue-800 hover:text-blue-700;
-} 
-
-img {
-  @apply rounded-lg;
-  margin-top: 10px;
-  border: 1px solid #e2e8f0;
-  width: 100%;
+.prose a {
+  @apply text-blue-600 hover:text-blue-800;
 }
 
+.prose blockquote {
+  @apply border-l-4 border-gray-200 pl-4 italic;
+}
+
+.prose hr {
+  @apply my-4 border-gray-200;
+}
+
+/* Reference styling */
+.reference {
+  @apply text-xs text-teal-600 font-medium ml-0.5 bg-teal-50 px-1 py-0.5 rounded;
+}
+
+/* Sources sections styling */
+.sources-section {
+  @apply mt-4 border rounded-lg overflow-hidden;
+}
+
+.sources-header {
+  @apply px-4 py-2 bg-gray-50 font-medium text-sm flex justify-between items-center cursor-pointer hover:bg-gray-100;
+}
+
+.sources-content {
+  @apply px-4 py-2 text-sm space-y-1;
+}
+
+/* Raw message content styles */
+pre {
+  @apply whitespace-pre-wrap font-sans text-sm;
+  @apply bg-transparent border-0 p-0 m-0;
+  @apply overflow-x-auto;
+}
+
+pre.text-teal-900 {
+  @apply font-medium;
+}
+
+/* References section styling */
+(h2:contains("References")), (h2:contains("References")) + p {
+  @apply border-t border-gray-100 pt-4 mt-6;
+}
+
+(h2:contains("References")) {
+  @apply text-lg font-medium text-gray-700;
+}
+
+(h2:contains("References")) + p, 
+(h2:contains("References")) ~ p {
+  @apply text-sm text-gray-600 my-1 break-words leading-relaxed;
+}
+
+(h2:contains("References")) ~ p a {
+  @apply text-teal-600 hover:text-teal-700 break-all text-xs;
+  word-break: break-all;
+}
+
+/* Inline citation styling */
+span.inline-block {
+  @apply text-xs text-teal-600 font-medium ml-0.5 bg-teal-50 px-1 py-0.5 rounded;
+}
+
+/* Ensure proper link wrapping */
+a {
+  @apply inline-block max-w-full overflow-hidden text-ellipsis;
+}
+
+/* Source list items */
+.sources-content li {
+  @apply py-1 break-all;
+}
+img{
+  margin-top: 20px;
+  border-radius: 10px;
+}
 </style>
