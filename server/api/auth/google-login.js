@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody(event)
-  const { idToken } = body
+  const { idToken, position, organization } = body
 
   if (!idToken) {
     event.res.statusCode = 400
@@ -52,7 +52,7 @@ export default defineEventHandler(async (event) => {
     const { uid, email } = decodedToken
 
     // Look for an existing user (by googleId or email)
-    const user = await prisma.user.findFirst({
+    let user = await prisma.user.findFirst({
       where: {
         OR: [{ googleId: uid }, { email }],
       },
@@ -60,11 +60,29 @@ export default defineEventHandler(async (event) => {
 
     if (!user) {
       console.log('No existing user found for:', { uid, email });
-      // User not found, signal that additional details are required.
-      return { needsDetails: true }
+      
+      // Check if we have position and organization details
+      if (position && organization) {
+        // Create a new user with the provided details
+        console.log('Creating new user with provided details');
+        user = await prisma.user.create({
+          data: {
+            email,
+            googleId: uid,
+            position,
+            organization,
+            role: 'normal',
+          },
+        });
+        console.log('New user created:', { userId: user.id, userEmail: user.email });
+      } else {
+        // Signal that additional details are required
+        console.log('Additional details required for new user');
+        return { needsDetails: true };
+      }
+    } else {
+      console.log('Existing user found:', { userId: user.id, userEmail: user.email });
     }
-
-    console.log('Existing user found:', { userId: user.id, userEmail: user.email });
 
     const config = useRuntimeConfig()
     const token = jwt.sign(

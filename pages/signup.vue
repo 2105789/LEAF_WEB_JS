@@ -219,8 +219,8 @@ const submitModalDetails = async (details) => {
         }
       }
     } else if (pendingSignupData.value.method === 'google') {
-      console.log('Calling google-signup endpoint...')
-      const data = await $fetch('/api/auth/google-signup', {
+      console.log('Calling google-login endpoint with additional details...')
+      const data = await $fetch('/api/auth/google-login', {
         method: 'POST',
         body: {
           idToken: pendingSignupData.value.idToken,
@@ -229,7 +229,7 @@ const submitModalDetails = async (details) => {
         },
         credentials: 'include'
       })
-      console.log('Signup response:', data)
+      console.log('Login response:', data)
       
       if (data.success) {
         console.log('Fetching user data...')

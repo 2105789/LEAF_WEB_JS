@@ -219,8 +219,8 @@ const submitModalDetails = async (details) => {
   showModal.value = false
   if (pendingGoogleData.value && pendingGoogleData.value.method === 'google') {
     try {
-      console.log('Calling google-signup endpoint...')
-      const data = await $fetch('/api/auth/google-signup', {
+      console.log('Calling google-login endpoint with additional details...')
+      const data = await $fetch('/api/auth/google-login', {
         method: 'POST',
         body: {
           idToken: pendingGoogleData.value.idToken,
@@ -229,12 +229,15 @@ const submitModalDetails = async (details) => {
         },
         credentials: 'include'
       })
-      console.log('Signup response:', data)
+      console.log('Login response:', data)
       
       if (data.success) {
         console.log('Fetching user data...')
         const userData = await fetchUser()
         if (userData) {
+          toast.value?.addToast('Login successful! Redirecting...', 'success', 2000)
+          // Wait for toast to be visible before redirecting
+          await new Promise(resolve => setTimeout(resolve, 500))
           console.log('User data fetched, redirecting to profile...')
           router.push('/chat')
         } else {
@@ -242,8 +245,8 @@ const submitModalDetails = async (details) => {
         }
       }
     } catch (error) {
-      console.error('Google signup error details:', error)
-      toast.value?.addToast(error?.data?.error || 'Google signup failed. Please try again.', 'error', 3000)
+      console.error('Google login with details error:', error)
+      toast.value?.addToast(error?.data?.error || 'Login failed. Please try again.', 'error', 3000)
     }
   }
 }
