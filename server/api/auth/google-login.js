@@ -70,7 +70,7 @@ export default defineEventHandler(async (event) => {
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       config.jwtSecret,
-      { expiresIn: '1h' }
+      { expiresIn: '365d' }
     )
 
     // Set the token as a cookie with specific options
