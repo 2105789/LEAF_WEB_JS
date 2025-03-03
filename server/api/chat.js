@@ -433,8 +433,10 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
         
       } else {
         processingState = 'research-pipeline'
+        console.log('[Research Pipeline] Starting research pipeline processing...')
         
         let searchParams = await determineSearchParameters(message, config.geminiApiKey)
+        console.log('[Research Pipeline] Search parameters determined:', searchParams)
         
         const searchOptions = {
           searchDepth: searchParams.searchDepth || "advanced",
@@ -464,22 +466,28 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
 
         // Perform web search
         if (enableWebSearch && tavilyClient) {
+          console.log('[Research Pipeline] Starting Tavily web search...')
           try {
             webSearchResults = await tavilyClient.search(message, searchOptions)
-            console.log("Tavily Search Response received")
+            console.log("[Research Pipeline] Tavily Search completed successfully")
           } catch (searchError) {
-            console.error("Error in Tavily search:", searchError)
+            console.error("[Research Pipeline] Error in Tavily search:", searchError)
             webSearchResults = { results: [], images: [] }
           }
+        } else {
+          console.log('[Research Pipeline] Web search skipped - enableWebSearch:', enableWebSearch, 'tavilyClient:', !!tavilyClient)
         }
 
+        console.log('[Research Pipeline] Extracting sources from search results...')
         const { webSources, imageSources } = extractSourcesFromTavily(webSearchResults)
+        console.log('[Research Pipeline] Sources extracted - Web sources:', webSources.length, 'Image sources:', imageSources.length)
 
         // Perform vector search
-        console.log("Performing vector search...")
+        console.log("[Research Pipeline] Starting vector search...")
         const vectorSearchResults = await searchQdrant(message, null, 5)
-        console.log("Vector search complete.")
+        console.log("[Research Pipeline] Vector search complete. Results:", vectorSearchResults.length)
 
+        console.log('[Research Pipeline] Preparing source details for prompt...')
         const webSourcesDetails = webSources.map(source =>
           `[${source.index}] ${source.title}\nURL: ${source.url}\nContent: ${source.content.substring(0, 1000)}${source.content.length > 1000 ? '...' : ''}`
         ).join('\n\n')
@@ -571,6 +579,7 @@ Follow these formatting requirements exactly:
      ${vectorSearchResults.map(s => `[V${vectorSearchResults.indexOf(s) + 1}] ${s.source} - Chunk ${s.chunkIndex} - ${s.filePath}`).join('\n')}
      </vectorsources>`
 
+        console.log('[Research Pipeline] Initializing Gemini model for final response...')
         const leafExpModel = new ChatGoogleGenerativeAI({
           apiKey: config.geminiApiKey,
           model: "gemini-2.0-flash-exp",
@@ -578,12 +587,15 @@ Follow these formatting requirements exactly:
           maxRetries: 2,
         })
 
+        console.log('[Research Pipeline] Sending request to Gemini model...')
         const finalResponse = await leafExpModel.invoke([
           ["system", researchSystemMessage],
           ["human", combinedContext]
         ])
+        console.log('[Research Pipeline] Received response from Gemini model')
         
         aiResponse = cleanMarkdownResponse(finalResponse.content)
+        console.log('[Research Pipeline] Response cleaned and ready for database')
         
       }
 
