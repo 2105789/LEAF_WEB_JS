@@ -3,6 +3,8 @@ import { getCookie } from 'h3'
 import jwt from 'jsonwebtoken'
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai"
 import { tavily } from "@tavily/core"
+import { QdrantClient } from "@qdrant/js-client-rest"
+import { pipeline } from '@xenova/transformers'
 import { writeFileSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -10,11 +12,91 @@ import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf"
 
 const prisma = new PrismaClient()
 
+// Model configurations
+const MODEL_CONFIG = {
+  router: {
+    name: "gemini-2.0-flash-lite",
+    temperature: 0.1
+  },
+  assistant: {
+    name: "gemini-2.0-flash-lite",
+    temperature: 0.3
+  },
+  final: {
+    name: "gemini-2.0-flash-exp",
+    temperature: 0.4
+  }
+}
+
 // Initialize Tavily client
 let tavilyClient = null
 
 // In-memory cache for active conversations
 const conversationCache = new Map()
+
+// Qdrant client configuration
+const qdrantClient = new QdrantClient({
+  url: "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io:6333",
+  apiKey: "Nygu4XKFKDhPxO47WOuaY_g2YsX3XTFacn39AvxaeOwtZ2Qnjbh46A"
+})
+
+// Collection name
+const COLLECTION_NAME = "leaf_data_v2"
+
+// Initialize embedding pipeline (make it globally accessible)
+let embeddingPipeline
+
+async function initializeEmbeddingPipeline() {
+  try {
+    embeddingPipeline = await pipeline('feature-extraction', 'Xenova/paraphrase-mpnet-base-v2')
+  } catch (error) {
+    console.error("Error initializing embedding pipeline:", error)
+    throw error
+  }
+}
+
+async function getEmbedding(text) {
+  try {
+    if (!embeddingPipeline) {
+      await initializeEmbeddingPipeline()
+    }
+    const output = await embeddingPipeline(text, {
+      pooling: 'mean',
+      normalize: true,
+    })
+    return Array.from(output.data)
+  } catch (error) {
+    console.error("Error generating embedding:", error)
+    throw error
+  }
+}
+
+// Search Qdrant for relevant chunks
+async function searchQdrant(query, sourceFilter = null, limit = 5) {
+  try {
+    const queryVector = await getEmbedding(query)
+    const filter = sourceFilter ? { must: [{ key: "source", match: { value: sourceFilter } }] } : undefined
+
+    const searchResult = await qdrantClient.search(COLLECTION_NAME, {
+      vector: queryVector,
+      filter: filter,
+      limit: limit,
+      with_payload: true,
+    })
+
+    return searchResult.map(result => ({
+      id: result.id,
+      source: result.payload.source,
+      filePath: result.payload.file_path || `data\\${result.payload.source}.pdf`,
+      chunkIndex: result.payload.chunk_index,
+      text: result.payload.text || result.payload.content,
+      score: result.score,
+    }))
+  } catch (error) {
+    console.error("Error searching Qdrant:", error)
+    return []
+  }
+}
 
 // Helper function to initialize Tavily
 function initTavily(apiKey) {
@@ -30,71 +112,138 @@ function initTavily(apiKey) {
   return !!tavilyClient
 }
 
-// Search configuration
-const SEARCH_OPTIONS = {
-  searchDepth: "advanced",
-  timeRange: "year",
-  includeAnswer: "advanced",
-  includeImages: true,
-  includeImageDescriptions: true,
-  includeRawContent: false,
-  includeDomains: [
-    "nature.com", "science.org", "sciencedirect.com", "pnas.org", "ipcc.ch",
-    "nasa.gov/climate", "climate.gov", "carbonbrief.org", "unfccc.int",
-    "climatecentral.org", "realclimate.org", "skepticalscience.com",
-    "climatefeedback.org", "grist.org", "insideclimatenews.org",
-    "yaleclimateconnections.org", "nytimes.com/section/climate",
-    "theguardian.com/environment/climate-crisis", "bbc.com/future/tags/climate_change",
-    "climatechangenews.com", "sciencebasedtargets.org", "wri.org",
-    "worldbank.org/en/topic/climatechange", "epa.gov/climate-change",
-    "globalchange.gov", "climate.mit.edu", "journals.ametsoc.org",
-    "scienceadvances.org", "iopscience.iop.org/journal/1748-9326",
-    "c2es.org", "climateworks.org", "climatepolicy.org",
-    "climatejusticealliance.org", "350.org", "climaterealityproject.org",
-    "noaa.gov/climate", "cdp.net", "ceres.org", "climateactiontracker.org",
-    "climatenexus.org"
-  ],
-};
+// Function to check if query is related to climate change or is a valid conversational query
+async function isClimateRelated(query, geminiApiKey) {
+  const topicModel = new ChatGoogleGenerativeAI({
+    apiKey: geminiApiKey,
+    model: "gemini-2.0-flash-lite",
+    temperature: 0,
+    maxRetries: 2,
+  })
 
-// Function to determine if a query requires research
-function requiresResearch(query) {
-  const researchKeywords = [
-    "climate change", "global warming", "study", "research", "experiment",
-    "scientific", "evidence", "hypothesis", "theory", "methodology",
-    "data", "statistics", "analysis", "correlation", "causation", "trends",
-    "metrics", "quantitative", "qualitative", "sample size", "margin of error",
-    "paper", "publication", "journal", "peer-reviewed", "citations",
-    "bibliography", "literature review", "meta-analysis", "proceedings",
-    "facts", "verify", "historical", "timeline", "survey",
-    "poll", "census", "demographic", "percentage", "rate",
-    "graph", "chart", "diagram", "table", "figure", "visualization",
-    "map", "plot", "image", "picture", "illustration",
-    "medical", "legal", "economic", "political", "technological",
-    "environmental", "psychological", "sociological", "anthropological",
-    "recent", "latest", "current", "news", "development", "update",
-    "breakthrough", "discovery", "innovation", "advancement","details","detail","detailed",
-    "why does", "how does", "what causes", "explain", "compare",
-    "contrast", "analyze", "evaluate", "examine", "investigate",
-    "policy", "adaptation", "graphs", "charts", "tables", "report",
-    "findings", "references", "images", "list", "urls", "sources", "links", "link"
-  ];
-  
-  return researchKeywords.some(keyword =>
-    query.toLowerCase().includes(keyword.toLowerCase())
-  );
+  const topicPrompt = `
+Analyze this query and determine if it falls into one of these categories:
+1. CLIMATE: Directly related to climate change, environmental sustainability, or related domains
+2. CONVERSATION: Basic conversation, context questions, or task-related queries (like summarizing PDFs, asking about previous discussions)
+3. OTHER: Completely unrelated topics
+
+Query: "${query}"
+
+Return ONLY "CLIMATE", "CONVERSATION", or "OTHER".`
+
+  try {
+    const topicResponse = await topicModel.invoke([["human", topicPrompt]])
+    const result = topicResponse.content.trim().toUpperCase()
+    return { 
+      isValid: result === "CLIMATE" || result === "CONVERSATION",
+      type: result
+    }
+  } catch (error) {
+    console.error("Error checking query type:", error)
+    return { isValid: true, type: "CONVERSATION" }
+  }
 }
 
-// Function to check if this is just a casual conversation
-function isCasualConversation(query) {
-  const casualPhrases = [
-    "hello", "hi", "hey", "how are you", "good morning", "good afternoon",
-    "good evening", "what's up", "how's it going", "nice to meet you",
-    "thanks", "thank you", "bye", "goodbye", "talk to you later", "chat"
-  ];
-  
-  return casualPhrases.some(phrase => 
-    query.toLowerCase().includes(phrase.toLowerCase())
-  );
+// Helper function to get conversation context
+async function getConversationContext(threadId, prisma, limit = 5) {
+  const recentMessages = await prisma.message.findMany({
+    where: { threadId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    select: {
+      role: true,
+      content: true,
+      createdAt: true
+    }
+  })
+  return recentMessages.reverse()
+}
+
+// Function to determine optimal search parameters based on query
+async function determineSearchParameters(query, geminiApiKey) {
+  const paramModel = new ChatGoogleGenerativeAI({
+    apiKey: geminiApiKey,
+    model: "gemini-2.0-flash-lite",
+    temperature: 0,
+    maxRetries: 2,
+  })
+
+  const paramPrompt = `
+Analyze this climate-related query: "${query}"
+
+Based on this query, determine these search parameters:
+1. searchDepth: "basic" for simple queries, "advanced" for complex research questions
+2. timeRange: "day", "week", "month", "year" based on information recency needs
+3. includeImages: boolean depending on if visual representation would be helpful
+4. maxResults: integer between 3 and 15 based on query complexity (more complex = more results)
+
+Return ONLY a valid JSON object without any markdown formatting, code blocks, or explanations:
+{"searchDepth":"advanced","timeRange":"year","includeImages":true,"maxResults":10}`
+
+  try {
+    const paramResponse = await paramModel.invoke([["human", paramPrompt]])
+    let responseContent = paramResponse.content.trim().replace(/```json\s*/g, "").replace(/```\s*$/g, "")
+    return JSON.parse(responseContent)
+  } catch (error) {
+    console.error("Error determining search parameters:", error)
+    return { searchDepth: "advanced", timeRange: "year", includeImages: true, maxResults: 10 }
+  }
+}
+
+// Create a router model to classify the query type
+async function routeQuery(query, geminiApiKey) {
+  const routerModel = new ChatGoogleGenerativeAI({
+    apiKey: geminiApiKey,
+    model: "gemini-2.0-flash-lite",
+    temperature: 0,
+    maxRetries: 2,
+  })
+
+  const routerPrompt = `
+Classify the following user query into EXACTLY ONE of these categories:
+1. CASUAL_CONVERSATION: Simple greetings, chitchat, or personal exchanges unrelated to climate
+2. RESEARCH_QUESTION: Questions that require factual information, data, studies, or citations, latest recent data, sources, images, urls.
+3. GENERAL_QUESTION: Other non-research climate questions that don't require citations
+
+Query: "${query}"
+
+Return ONLY the category name, nothing else. No explanations.`
+
+  try {
+    const routerResponse = await routerModel.invoke([["human", routerPrompt]])
+    const classification = routerResponse.content.trim().toUpperCase()
+    if (classification.includes("CASUAL")) return "CASUAL_CONVERSATION"
+    if (classification.includes("RESEARCH")) return "RESEARCH_QUESTION"
+    return "GENERAL_QUESTION"
+  } catch (error) {
+    console.error("Error in query routing:", error)
+    return "GENERAL_QUESTION"
+  }
+}
+
+// Function to extract and format sources from search results
+function extractSourcesFromTavily(searchResults) {
+  if (!searchResults || !searchResults.results || !Array.isArray(searchResults.results)) {
+    console.error("Invalid search results structure")
+    return { webSources: [], imageSources: [] }
+  }
+
+  const webSources = searchResults.results.map((result, index) => ({
+    index: index + 1,
+    title: result.title || "Untitled Source",
+    url: result.url || "",
+    content: [result.rawContent, result.content, result.content_snippet]
+      .find(content => typeof content === 'string') || ""
+  }))
+
+  const imageSources = (searchResults.images || []).map((img, index) => ({
+    index: index + 1,
+    url: img.url || "",
+    description: img.description || `Image related to query`,
+    sourceUrl: img.source_url || ""
+  }))
+
+  return { webSources, imageSources }
 }
 
 // Helper function to validate PDF data
@@ -110,24 +259,20 @@ function base64ToBuffer(base64) {
 // Helper function to extract text from PDF
 async function extractTextFromPDF(pdfBuffer) {
   try {
-    // Create a temporary file to store the PDF
     const tempFilePath = join(tmpdir(), `temp_pdf_${Date.now()}.pdf`)
     writeFileSync(tempFilePath, pdfBuffer)
     
-    // Use PDFLoader to extract text
     const loader = new PDFLoader(tempFilePath, {
       splitPages: false
     })
     const docs = await loader.load()
     
-    // Clean up temporary file
     try {
       unlinkSync(tempFilePath)
     } catch (cleanupError) {
       console.warn('Failed to clean up temporary PDF file:', cleanupError)
     }
     
-    // Return the extracted text
     return docs.length > 0 ? docs[0].pageContent : ""
   } catch (error) {
     console.error('Error extracting text from PDF:', error)
@@ -135,343 +280,10 @@ async function extractTextFromPDF(pdfBuffer) {
   }
 }
 
-// Helper function to generate numbered references from search results
-function generateNumberedReferences(searchResults) {
-  if (!searchResults || !searchResults.results || searchResults.results.length === 0) {
-    return { referenceMap: {}, referencesSection: "" };
-  }
-  
-  const referenceMap = {};
-  let referencesSection = "## References\n\n";
-  
-  searchResults.results.forEach((result, index) => {
-    const refNumber = index + 1;
-    const refKey = `[${refNumber}]`;
-    
-    // Map URL to reference number
-    referenceMap[result.url] = refKey;
-    
-    // Create references section
-    referencesSection += `${refKey} ${result.title}. ${result.url}\n\n`;
-  });
-  
-  return { referenceMap, referencesSection };
-}
-
-// Helper function to extract key topics from conversation with Gemini
-async function extractKeyTopics(messages, geminiApiKey) {
-  // Combine last few messages
-  const recentMessages = messages.slice(-5).map(m => m.content).join("\n")
-  if (!recentMessages.trim()) {
-    return []
-  }
-  
-  try {
-    const geminiModel = new ChatGoogleGenerativeAI({
-      apiKey: geminiApiKey,
-      model: "gemini-2.0-flash",
-      temperature: 0.1,
-    })
-
-    const response = await geminiModel.invoke([
-      ["system", "Extract 3-5 key topics or entities mentioned in the following conversation snippet. Return them as a comma-separated list without descriptions or explanations."],
-      ["human", recentMessages],
-    ])
-    
-    return response.content.split(',').map(topic => topic.trim())
-  } catch (error) {
-    console.error('Failed to extract topics:', error)
-    return []
-  }
-}
-
-// Helper function to find relevant previous messages using semantic similarity
-async function findRelevantPreviousMessages(messages, currentQuery, geminiApiKey) {
-  try {
-    if (messages.length < 5) return [] // Not enough history to be useful
-    
-    const geminiModel = new ChatGoogleGenerativeAI({
-      apiKey: geminiApiKey,
-      model: "gemini-2.0-flash",
-      temperature: 0.1,
-    })
-    
-    const truncatedMessages = messages.slice(-15).map(m => `${m.role}: ${m.content.slice(0, 200)}${m.content.length > 200 ? '...' : ''}`)
-    
-    const prompt = `Below is a conversation history and a new query.
-    
-CONVERSATION HISTORY:
-${truncatedMessages.join('\n\n')}
-
-NEW QUERY: ${currentQuery}
-
-Find the 2-3 most relevant previous messages from the conversation history that would help answer the new query.
-Return only the message numbers in the conversation (1 for the first message, 2 for the second, etc.), comma-separated.
-If no messages are relevant, return "NONE".`
-    
-    const response = await geminiModel.invoke([
-      ["system", "You are a helpful assistant that identifies the most relevant messages in a conversation history."],
-      ["human", prompt],
-    ])
-    
-    const result = response.content.trim()
-    if (result === "NONE") return []
-    
-    // Parse message numbers and get the actual messages
-    const messageIndices = result.split(',').map(num => parseInt(num.trim()) - 1).filter(idx => !isNaN(idx) && idx >= 0 && idx < messages.length)
-    return messageIndices.map(idx => messages[idx])
-  } catch (error) {
-    console.error('Failed to find relevant previous messages:', error)
-    return []
-  }
-}
-
-// Helper function to generate conversation summary
-async function generateConversationSummary(messages, geminiApiKey) {
-  // Combine the last few messages into a string
-  const recentMessages = messages.slice(-10)
-    .map(m => `${m.role}: ${m.content.slice(0, 300)}${m.content.length > 300 ? '...' : ''}`)
-    .join("\n\n");
-    
-  if (!recentMessages.trim()) {
-    return "";
-  }
-  
-  try {
-    const summarizationModel = new ChatGoogleGenerativeAI({
-      apiKey: geminiApiKey,
-      model: "gemini-2.0-flash",
-      temperature: 0.2,
-    })
-    
-    const response = await summarizationModel.invoke([
-      ["system", "Summarize the main points and ongoing themes of this conversation in 3-5 sentences. Focus on key information that would be important for continuing the conversation naturally."],
-      ["human", `Summarize this conversation:\n\n${recentMessages}`],
-    ])
-    
-    return response.content
-  } catch (error) {
-    console.error('Failed to generate summary:', error)
-    return null
-  }
-}
-
-// Function to analyze message type
-async function analyzeMessageType(message, previousMessage) {
-  if (!previousMessage) return 'initial'
-  
-  const patterns = {
-    followup: ['more', 'continue', 'elaborate', 'tell me more', 'what about', 'and', 'also', 'additionally'],
-    clarification: ['what do you mean', 'could you explain', 'i dont understand', 'clarify', 'what is', 'how does'],
-    disagreement: ['but', 'however', 'disagree', 'not true', 'incorrect', 'wrong'],
-    agreement: ['yes', 'agree', 'exactly', 'true', 'right', 'correct'],
-  }
-  
-  const lowercaseMsg = message.toLowerCase()
-  for (const [type, keywords] of Object.entries(patterns)) {
-    if (keywords.some(keyword => lowercaseMsg.includes(keyword))) {
-      return type
-    }
-  }
-  
-  return 'question'
-}
-
-// Enhanced function to generate context-aware system message
-async function generateContextAwareSystemMessage(thread, messages, currentQuery, geminiApiKey) {
-  let systemMessage = `You are Leaf, a helpful AI expert assistant specialized in climate change mitigation and research, developed by APCTT. Your responses should be thoughtful, engaging, detailed, and informative, while maintaining a natural conversational flow. You are in a conversation thread titled "${thread.title}".
-
-IMPORTANT CONVERSATION GUIDELINES:
-1. Always maintain continuity with previous messages
-2. Reference previous points when relevant
-3. Use natural transitions between topics
-4. Acknowledge user's previous statements/questions
-5. Stay focused on the climate science domain
-6. Be empathetic and understanding
-7. Use conversational language while maintaining professionalism
-8. If continuing a previous topic, explicitly acknowledge it
-9. If changing topics, use smooth transitions
-10. Maintain consistent terminology throughout the conversation`
-
-  // Get conversation context from database and cache
-  const dbThread = await prisma.thread.findUnique({
-    where: { id: thread.id },
-    include: {
-      lastMessage: true,
-      messages: {
-        orderBy: { createdAt: 'desc' },
-        take: 10
-      }
-    }
-  })
-
-  if (dbThread.lastContext) {
-    systemMessage += `\n\nPREVIOUS CONTEXT: ${dbThread.lastContext}`
-  }
-
-  if (dbThread.keyTopics && dbThread.keyTopics.length > 0) {
-    systemMessage += `\n\nKEY TOPICS IN THIS THREAD: ${dbThread.keyTopics.join(', ')}`
-  }
-
-  // Get cached data
-  const cachedData = conversationCache.get(thread.id) || {}
-  
-  // Analyze message type
-  const messageType = await analyzeMessageType(currentQuery, dbThread.lastMessage?.content)
-  
-  // Add message type context
-  systemMessage += `\n\nCURRENT MESSAGE TYPE: ${messageType}`
-  
-  // Find relevant previous messages with enhanced context
-  const relevantMessages = await findRelevantPreviousMessages(messages, currentQuery, geminiApiKey)
-  if (relevantMessages.length > 0) {
-    systemMessage += `\n\nRELEVANT PREVIOUS EXCHANGES:\n`
-    relevantMessages.forEach((msg, idx) => {
-      const truncatedContent = msg.content.slice(0, 500)
-      systemMessage += `\n[${msg.role.toUpperCase()}]: ${truncatedContent}${msg.content.length > 500 ? '...' : ''}`
-    })
-  }
-
-  // Add conversation flow guidance based on message type
-  const flowGuidance = {
-    followup: "Continue the previous discussion, building upon the last response while adding new insights.",
-    clarification: "Provide a clearer explanation of the previous point, using different wording and examples.",
-    disagreement: "Address the user's concerns respectfully while providing evidence-based explanations.",
-    agreement: "Acknowledge the agreement and expand on the topic with additional relevant information.",
-    question: "Provide a comprehensive answer while connecting it to any relevant previous discussion points.",
-    initial: "Start a new discussion thread while being ready to connect it to any relevant previous topics."
-  }
-
-  systemMessage += `\n\nCONVERSATION FLOW GUIDANCE: ${flowGuidance[messageType]}`
-
-  // Add recent emotional context if available
-  if (cachedData.emotionalContext) {
-    systemMessage += `\n\nUSER EMOTIONAL CONTEXT: ${cachedData.emotionalContext}`
-  }
-
-  return systemMessage
-}
-
-// Enhanced function to update conversation cache
-async function updateConversationCache(threadId, messages, geminiApiKey) {
-  const now = new Date()
-  const cachedData = conversationCache.get(threadId) || {}
-  const timeDiff = cachedData.lastUpdated ? now - cachedData.lastUpdated : Infinity
-  
-  // Update every 2 minutes or if cache doesn't exist
-  if (timeDiff > 2 * 60 * 1000 || !cachedData.lastUpdated) {
-    const summary = await generateConversationSummary(messages, geminiApiKey)
-    const keyTopics = await extractKeyTopics(messages, geminiApiKey)
-    
-    // Analyze emotional context from recent messages
-    const emotionalContext = await analyzeEmotionalContext(messages.slice(-3), geminiApiKey)
-    
-    // Update database
-    await prisma.thread.update({
-      where: { id: threadId },
-      data: {
-        lastContext: summary,
-        keyTopics,
-        lastMessageId: messages[messages.length - 1]?.id
-      }
-    })
-    
-    // Update cache
-    conversationCache.set(threadId, {
-      summary,
-      keyTopics,
-      emotionalContext,
-      lastUpdated: now,
-      recentTopics: messages.slice(-5).map(m => m.content).join(' ') // For quick keyword matching
-    })
-  }
-}
-
-// New function to analyze emotional context
-async function analyzeEmotionalContext(recentMessages, geminiApiKey) {
-  if (!recentMessages || recentMessages.length === 0) return null
-  
-  try {
-    const geminiModel = new ChatGoogleGenerativeAI({
-      apiKey: geminiApiKey,
-      model: "gemini-2.0-flash",
-      temperature: 0.1,
-    })
-
-    const messageText = recentMessages
-      .filter(m => m.role === 'user')
-      .map(m => m.content)
-      .join('\n')
-
-    const response = await geminiModel.invoke([
-      ["system", "Analyze the emotional context and engagement level in these messages. Return a brief description of the user's apparent emotional state and engagement level."],
-      ["human", messageText],
-    ])
-
-    return response.content
-  } catch (error) {
-    console.error('Failed to analyze emotional context:', error)
-    return null
-  }
-}
-
-// Helper function to keep the most important parts of the conversation history
-function getOptimalConversationHistory(messages, currentQuery) {
-  if (messages.length <= 10) {
-    // If we have 10 or fewer messages, use all of them
-    return messages.map(msg => [`${msg.role === 'user' ? 'human' : 'assistant'}`, msg.content])
-  }
-  
-  // Always include the first message for context
-  const firstMessage = messages[0]
-  
-  // Include the last 6 messages for recency
-  const recentMessages = messages.slice(-6)
-  
-  // Find messages with similar keywords to the current query
-  const queryWords = currentQuery.toLowerCase().split(/\W+/).filter(word => word.length > 3)
-  const relevantMessages = messages.filter((msg, idx) => {
-    // Skip first and recent messages to avoid duplicates
-    if (idx === 0 || recentMessages.includes(msg)) return false
-    
-    const msgWords = msg.content.toLowerCase().split(/\W+/).filter(word => word.length > 3)
-    return queryWords.some(word => msgWords.includes(word))
-  }).slice(0, 3) // Take up to 3 relevant messages
-  
-  // Combine and sort chronologically
-  const selectedMessages = [firstMessage, ...relevantMessages, ...recentMessages]
-    .filter((msg, idx, arr) => arr.findIndex(m => m === msg) === idx) // Remove duplicates
-    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-  
-  return selectedMessages.map(msg => [`${msg.role === 'user' ? 'human' : 'assistant'}`, msg.content])
-}
-
-// Add this new function for calculating relevance score
-async function calculateRelevanceScore(message, thread, geminiApiKey) {
-  if (!thread.messages || thread.messages.length === 0) return 1.0 // First message in thread
-  
-  try {
-    const geminiModel = new ChatGoogleGenerativeAI({
-      apiKey: geminiApiKey,
-      model: "gemini-2.0-flash",
-      temperature: 0.1,
-    })
-
-    // Get the last few messages for context
-    const recentMessages = thread.messages.slice(-3)
-    const contextText = recentMessages.map(m => m.content).join('\n')
-    
-    const response = await geminiModel.invoke([
-      ["system", "Analyze the semantic relevance between the new message and recent conversation context. Return a single number between 0 and 1, where 1 means highly relevant and 0 means completely unrelated."],
-      ["human", `Context:\n${contextText}\n\nNew message:\n${message}\n\nRelevance score (0-1):`]
-    ])
-    
-    const score = parseFloat(response.content)
-    return isNaN(score) ? 0.5 : score // Default to 0.5 if parsing fails
-  } catch (error) {
-    console.error('Failed to calculate relevance score:', error)
-    return 0.5 // Default score on error
-  }
+// Helper function to clean markdown response
+function cleanMarkdownResponse(response) {
+  // Remove ```markdown at the start and ``` at the end if present
+  return response.replace(/^```markdown\n/, '').replace(/\n```$/, '').trim()
 }
 
 export default defineEventHandler(async (event) => {
@@ -547,8 +359,6 @@ export default defineEventHandler(async (event) => {
           if (!isPDFValid(buffer)) {
             throw new Error('Invalid PDF format')
           }
-          
-          // Extract text from PDF
           pdfContent = await extractTextFromPDF(buffer)
           console.log('Successfully extracted PDF content:', pdfContent.slice(0, 200) + '...')
         } catch (error) {
@@ -556,147 +366,226 @@ export default defineEventHandler(async (event) => {
         }
       }
 
-      // Before generating the AI response, get enhanced context
-      const systemMessage = await generateContextAwareSystemMessage(thread, thread.messages, message, config.geminiApiKey)
-
-      // Use different temperature based on message type
-      const messageType = await analyzeMessageType(message, thread.messages[thread.messages.length - 1]?.content)
-      const temperature = {
-        followup: 0.3,
-        clarification: 0.1,
-        disagreement: 0.2,
-        agreement: 0.4,
-        question: 0.3,
-        initial: 0.4
-      }[messageType] || 0.3
-
-      // Initialize model with dynamic temperature
-      const leafModel = new ChatGoogleGenerativeAI({
-        apiKey: config.geminiApiKey,
-        model: "gemini-2.0-flash",
-        temperature: temperature,
-      })
-
       // Initialize Tavily if needed
-      if (enableWebSearch && requiresResearch(message)) {
+      if (enableWebSearch) {
         initTavily(config.tavilyApiKey)
       }
 
-      // Get the most relevant conversation history
-      const conversationHistory = getOptimalConversationHistory(thread.messages, message)
-
-      // Prepare PDF prompt
-      let pdfPrompt = ""
-      if (pdfContent) {
-        pdfPrompt = `\n\nI have uploaded a PDF document with the following content. Please analyze this content along with my query:\n\n${pdfContent}\n\nBased on the above PDF content and my question: "${message}", please provide an informed response.`
+      // Check query type and get conversation context
+      const { isValid, type } = await isClimateRelated(message, config.geminiApiKey)
+      const conversationContext = await getConversationContext(threadId, prisma)
+      
+      if (!isValid) {
+        aiResponse = `I'm Leaf, an AI assistant specialized in climate change and environmental sustainability. While I can help with general conversations and tasks, I'd be most helpful discussing climate-related topics. How can I assist you today?`
+        
+        const savedMessage = await prisma.message.create({
+          data: {
+            content: aiResponse,
+            role: 'assistant',
+            threadId,
+            userId: decoded.id,
+            parentMsgId: userMessage.id
+          }
+        })
+        
+        return { 
+          messages: [userMessage, savedMessage],
+          processingState: 'general-conversation'
+        }
       }
 
-      if (isCasualConversation(message)) {
-        // Just use the base model for casual conversation
-        processingState = 'casual-conversation'
+      // Route the query based on type and context
+      if (type === "CONVERSATION") {
+        processingState = 'conversation'
         
-        const response = await leafModel.invoke([
-          ["system", systemMessage],
-          ...conversationHistory,
-          ["human", pdfContent ? `${message}\n\nI've also uploaded a PDF that contains the following information: ${pdfContent.slice(0, 2000)}${pdfContent.length > 2000 ? '...' : ''}` : message],
+        const leafLiteModel = new ChatGoogleGenerativeAI({
+          apiKey: config.geminiApiKey,
+          model: "gemini-2.0-flash-lite",
+          temperature: 0.3,
+          maxRetries: 2,
+        })
+
+        const contextPrompt = `
+You are Leaf, a helpful AI assistant with expertise in climate change and environmental sustainability.
+While your primary focus is climate-related topics, you can also engage in general conversation and help with basic tasks.
+
+Recent conversation context:
+${conversationContext.map(msg => `${msg.role}: ${msg.content}`).join('\n')}
+
+Current query: ${message}
+
+${pdfContent ? `There is also a PDF document provided with the following content:
+${pdfContent.slice(0, 8000)}...` : ''}
+
+Respond naturally to the query, taking into account the conversation context and any provided PDF content.
+If the query is about previous discussions, summarize the relevant points from the conversation context.
+If it's about a PDF, focus on providing a clear summary or answering specific questions about its content.
+Always maintain a helpful and engaging tone while subtly encouraging climate-related discussions when appropriate.
+
+IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown formatting (**, *, #, ##) directly in your response.`
+
+        const response = await leafLiteModel.invoke([
+          ["system", "You are Leaf, maintaining a balance between climate expertise and general helpfulness. Format responses with markdown but do not use code blocks."],
+          ["human", contextPrompt]
         ])
         
-        aiResponse = response.content
+        aiResponse = cleanMarkdownResponse(response.content)
         
-      } else if (requiresResearch(message) && enableWebSearch) {
-        // For research questions, use the full pipeline
+      } else {
         processingState = 'research-pipeline'
         
-        // Step 1: Retrieve Search Results with Tavily
-        if (tavilyClient) {
+        let searchParams = await determineSearchParameters(message, config.geminiApiKey)
+        
+        const searchOptions = {
+          searchDepth: searchParams.searchDepth || "advanced",
+          timeRange: searchParams.timeRange || "year",
+          includeAnswer: "advanced",
+          includeImages: searchParams.includeImages !== false,
+          includeImageDescriptions: true,
+          includeRawContent: true,
+          maxResults: Math.min(Math.max(searchParams.maxResults || 10, 3), 20),
+          includeDomains: [
+            "nature.com", "science.org", "sciencedirect.com", "pnas.org", "ipcc.ch",
+            "nasa.gov/climate", "climate.gov", "carbonbrief.org", "unfccc.int",
+            "climatecentral.org", "realclimate.org", "skepticalscience.com",
+            "climatefeedback.org", "grist.org", "insideclimatenews.org",
+            "yaleclimateconnections.org", "nytimes.com/section/climate",
+            "theguardian.com/environment/climate-crisis", "bbc.com/future/tags/climate_change",
+            "climatechangenews.com", "sciencebasedtargets.org", "wri.org",
+            "worldbank.org/en/topic/climatechange", "epa.gov/climate-change",
+            "globalchange.gov", "climate.mit.edu", "journals.ametsoc.org",
+            "scienceadvances.org", "iopscience.iop.org/journal/1748-9326",
+            "c2es.org", "climateworks.org", "climatepolicy.org",
+            "climatejusticealliance.org", "350.org", "climaterealityproject.org",
+            "noaa.gov/climate", "cdp.net", "ceres.org", "climateactiontracker.org",
+            "climatenexus.org"
+          ],
+        }
+
+        // Perform web search
+        if (enableWebSearch && tavilyClient) {
           try {
-            webSearchResults = await tavilyClient.search(message, SEARCH_OPTIONS)
-            
-            // Generate numbered references from search results
-            const referencesData = generateNumberedReferences(webSearchResults);
-            referenceMap = referencesData.referenceMap;
-            referencesSection = referencesData.referencesSection;
+            webSearchResults = await tavilyClient.search(message, searchOptions)
+            console.log("Tavily Search Response received")
           } catch (searchError) {
-            console.warn('Web search failed:', searchError)
+            console.error("Error in Tavily search:", searchError)
+            webSearchResults = { results: [], images: [] }
           }
         }
 
-        // Step 2: Get an Initial Answer from Leaf base model
-        const initialResponse = await leafModel.invoke([
-          ["system", systemMessage],
-          ...conversationHistory,
-          ["human", pdfContent ? `${message}\n\nI've also uploaded a PDF that contains the following information: ${pdfContent.slice(0, 2000)}${pdfContent.length > 2000 ? '...' : ''}` : message],
-        ])
+        const { webSources, imageSources } = extractSourcesFromTavily(webSearchResults)
 
-        // Find relevant previous exchanges that might be related to this query
-        const relevantPreviousMessages = await findRelevantPreviousMessages(
-          thread.messages, 
-          message,
-          config.geminiApiKey
-        )
-        
-        // Format the relevant exchanges for the context
-        const relevantExchanges = relevantPreviousMessages.length > 0 
-          ? `\n\nRelevant information from our previous conversation:\n` + 
-            relevantPreviousMessages.map(msg => 
-              `${msg.role.toUpperCase()}: ${msg.content.slice(0, 300)}${msg.content.length > 300 ? '...' : ''}`
+        // Perform vector search
+        console.log("Performing vector search...")
+        const vectorSearchResults = await searchQdrant(message, null, 5)
+        console.log("Vector search complete.")
+
+        const webSourcesDetails = webSources.map(source =>
+          `[${source.index}] ${source.title}\nURL: ${source.url}\nContent: ${source.content.substring(0, 1000)}${source.content.length > 1000 ? '...' : ''}`
+        ).join('\n\n')
+
+        const imageSourcesDetails = imageSources.length > 0
+          ? imageSources.map(img =>
+              `[${img.index}] ${img.description}\nURL: ${img.url}\nSource: ${img.sourceUrl}`
             ).join('\n\n')
-          : ''
+          : "No relevant images found in search results."
 
-        // Step 3: Combine Information for the Thinking model
-        let combinedContext = `Initial answer from Leaf:
-${initialResponse.content}
+        const vectorSourcesDetails = vectorSearchResults.map((source, index) =>
+          `[V${index + 1}] Source: ${source.source}\nChunk Index: ${source.chunkIndex}\nContent: ${source.text.substring(0, 1000)}${source.text.length > 1000 ? '...' : ''}`
+        ).join('\n\n')
 
-${webSearchResults ? `Latest detailed search results from Tavily:
-${JSON.stringify(webSearchResults, null, 2)}
+        const researchSystemMessage = `You are Leaf, a specialized AI expert assistant focused on climate change mitigation and research. Your task is to produce a comprehensive, research-paper-style response that is a minimum of 2000 words, resembling an academic paper with extensive depth, rigor, and detail. Follow these guidelines:
 
-Reference Numbers for each source:
-${JSON.stringify(referenceMap, null, 2)}` : 'No search results available.'}
+- **Length and Depth**: The response must be at least 2000 words, structured as a full research paper with 15-20 paragraphs, covering all relevant aspects of the query exhaustively.
+- **Scientific Rigor**: Use precise, evidence-based language, integrating data, studies, and real-world examples. Explain technical terms parenthetically and use analogies for complex concepts.
+- **Narrative Style**: Write in an engaging, authoritative tone with contractions, rhetorical questions, and emphasis markers (*italic*, **bold**) to maintain reader interest.
+- **Evidence Integration**: Seamlessly weave sources into the text, citing them in-line with [number] for web/image sources and [V#] for vector sources.
 
-${pdfContent ? `PDF Document Content:
-${pdfContent.slice(0, 3000)}${pdfContent.length > 3000 ? '...' : ''}` : 'No PDF content available.'}${relevantExchanges}
+Structure your response as follows:
+- **Abstract**: A 150-200 word summary of key findings and conclusions.
+- **Introduction**: Contextualize the query with a hook ('This matters because...') and outline the paper's scope.
+- **Background**: Provide historical and scientific context (e.g., Current Situation, Science Behind It).
+- **Main Analysis**: Multiple detailed sections (e.g., Impacts, Solutions, Challenges, Case Studies) with subheadings.
+- **Discussion**: Analyze implications, trade-offs, and future directions.
+- **Conclusion**: Summarize key takeaways and actionable insights.
+- **References**: A dedicated section listing all cited sources with full details, consolidating web, image, and vector sources.`
 
-Using the above information, please provide a final, detailed answer as Leaf.
-Your answer must include:
-- A clear summary and detailed analysis of the topic.
-- **Directly embed relevant images within the text where appropriate. Use markdown image syntax: ![alt text](image URL)**.
-- For each image, include a short caption describing the image and its relevance to the text.
-- **VERY IMPORTANT: When stating facts or citing information, include the appropriate reference number [1], [2], etc. after the statement.**
-- **DO NOT create your own reference numbers. ONLY use the reference numbers provided in the "Reference Numbers for each source" section above.**
-- End your response with the complete "References" section that lists all numbered sources.
-- Your response should feel like a continuation of an ongoing conversation, referencing previous topics when relevant.
-Ensure the answer is structured and clear, similar to a well-designed blog post or textbook explanation.`;
+        let combinedContext = `Provide a comprehensive, research-paper-style answer to this user query: "${message}"
 
-        // Step 4: Synthesize the Final Answer Using Leaf Thinking
-        const finalResponse = await leafModel.invoke([
-          ["system", systemMessage],
+The response must be a minimum of 2000 words, structured as an academic paper with 15-20 paragraphs, including an abstract, introduction, background, detailed analysis sections, discussion, conclusion, and references. Use the following information sources to craft your answer:
+
+WEB SOURCES:
+${webSourcesDetails || "No web sources available from search results."}
+
+IMAGE SOURCES:
+${imageSourcesDetails}
+
+VECTOR SOURCES:
+${vectorSourcesDetails}
+
+${pdfContent ? `PDF CONTENT:
+${pdfContent.slice(0, 8000)}${pdfContent.length > 8000 ? '...' : ''}` : ''}
+
+Follow these formatting requirements exactly:
+
+1. **FORMAT USING PROFESSIONAL MARKDOWN**:
+   - Use headings (#, ##) for sections and subsections
+   - Use lists (- or 1.) and tables for data where applicable
+   - Use bold (**bold**) and italic (*italic*) for emphasis
+
+2. **START DIRECTLY WITH THE ABSTRACT**:
+   - Begin with a 150-200 word abstract summarizing findings
+   - Do NOT include greetings like "I'm Leaf" or introductory phrases
+   - Launch straight into the content
+
+3. **INCLUDE IMAGES**:
+   ${imageSources.length > 0 ? `- Select 3-5 relevant images
+   - Insert using markdown: ![DESCRIPTIVE CAPTION](URL)
+   - Each image MUST have a detailed caption in italics below it, incorporating information from the image description
+   - Format each caption as: *${imageSources.length > 0 ? imageSources[0].description + ' - Relevance to the topic explained.' : 'Description of the image and its relevance'}*` : '- No images available'}
+
+4. **CITE SOURCES PROPERLY**:
+   - Use [1], [2], etc. for web sources, [I1], [I2], etc. for image sources, and [V1], [V2], etc. for vector sources
+   - Cite 5-7 unique sources in the text, including direct quotes
+   - Include a 'References' section listing all cited sources with full details
+
+5. **STRUCTURE REQUIREMENTS**:
+   - Abstract (150-200 words)
+   - Introduction (with 'This matters because...' hook)
+   - Background (historical/scientific context)
+   - 3-5 detailed analysis sections (e.g., Impacts, Solutions, Challenges)
+   - Discussion (implications and future directions)
+   - Conclusion (key takeaways)
+   - References (consolidated list of all cited sources)
+
+6. **END WITH SEGREGATED SOURCE SECTIONS**:
+   - Include a 'References' section with all cited sources (web, image, vector) listed together
+   - Follow with separate blocks:
+     <websources>
+     ${webSources.map(s => `[${s.index}] ${s.title} - ${s.url}`).join('\n')}
+     </websources>
+     <imagesources>
+     ${imageSources.map(i => `[I${i.index}] ${i.description} - ${i.url}`).join('\n')}
+     </imagesources>
+     <vectorsources>
+     ${vectorSearchResults.map(s => `[V${vectorSearchResults.indexOf(s) + 1}] ${s.source} - Chunk ${s.chunkIndex} - ${s.filePath}`).join('\n')}
+     </vectorsources>`
+
+        const leafExpModel = new ChatGoogleGenerativeAI({
+          apiKey: config.geminiApiKey,
+          model: "gemini-2.0-flash-exp",
+          temperature: 0.4,
+          maxRetries: 2,
+        })
+
+        const finalResponse = await leafExpModel.invoke([
+          ["system", researchSystemMessage],
           ["human", combinedContext]
         ])
         
-        // Use the AI response, but make sure it ends with the references section
-        aiResponse = finalResponse.content;
+        aiResponse = cleanMarkdownResponse(finalResponse.content)
         
-        // If the AI didn't include the references section or didn't format it correctly,
-        // append the properly formatted references section
-        if (!aiResponse.includes("## References") && referencesSection) {
-          aiResponse += "\n\n" + referencesSection;
-        }
-        
-      } else {
-        // For general questions (not casual, not research)
-        processingState = 'general-question'
-        
-        const response = await leafModel.invoke([
-          ["system", systemMessage],
-          ...conversationHistory,
-          ["human", pdfContent ? `${message}\n\nI've also uploaded a PDF that contains the following information: ${pdfContent.slice(0, 2000)}${pdfContent.length > 2000 ? '...' : ''}` : message],
-        ])
-        
-        aiResponse = response.content
       }
-
-      // Calculate relevance score
-      const relevanceScore = await calculateRelevanceScore(message, thread, config.geminiApiKey)
 
       // Save AI response to database
       const savedMessage = await prisma.message.create({
@@ -705,14 +594,9 @@ Ensure the answer is structured and clear, similar to a well-designed blog post 
           role: 'assistant',
           threadId,
           userId: decoded.id,
-          messageType,
-          parentMsgId: userMessage.id,
-          contextScore: relevanceScore
+          parentMsgId: userMessage.id
         }
       })
-      
-      // After generating response, update cache and database
-      await updateConversationCache(threadId, [...thread.messages, userMessage, savedMessage], config.geminiApiKey)
 
       // Return messages with web search data and processing state
       return { 
@@ -720,11 +604,10 @@ Ensure the answer is structured and clear, similar to a well-designed blog post 
         webSearchData: webSearchResults ? {
           sources: webSearchResults.results || [],
           images: webSearchResults.images || [],
-          answer: webSearchResults.answer || null,
-          referenceMap: referenceMap // Include the reference mapping
+          answer: webSearchResults.answer || null
         } : null,
         processingState,
-        pdfProcessed: !!pdfContent // Add flag to indicate if PDF was processed
+        pdfProcessed: !!pdfContent
       }
 
     } catch (error) {
