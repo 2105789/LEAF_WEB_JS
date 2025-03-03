@@ -546,20 +546,20 @@ pre.text-teal-900 {
 }
 
 /* References section styling */
-(h2:contains("References")), (h2:contains("References")) + p {
+h2:contains("References"), h2:contains("References") + p {
   @apply border-t border-gray-100 pt-4 mt-6;
 }
 
-(h2:contains("References")) {
+h2:contains("References") {
   @apply text-lg font-medium text-gray-700;
 }
 
-(h2:contains("References")) + p, 
-(h2:contains("References")) ~ p {
+h2:contains("References") + p, 
+h2:contains("References") ~ p {
   @apply text-sm text-gray-600 my-1 break-words leading-relaxed;
 }
 
-(h2:contains("References")) ~ p a {
+h2:contains("References") ~ p a {
   @apply text-teal-600 hover:text-teal-700 break-all text-xs;
   word-break: break-all;
 }
