@@ -35,15 +35,13 @@ let tavilyClient = null
 const conversationCache = new Map()
 
 // Qdrant client configuration
-const qdrantClient = new QdrantClient({
-  url: process.env.QDRANT_URL || "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io",
-  apiKey: process.env.QDRANT_API_KEY || "Nygu4XKFKDhPxO47WOuaY_g2YsX3XTFacn39AvxaeOwtZ2Qnjbh46A",
-  port: process.env.QDRANT_PORT || 443,
-  https: true
-})
+// const qdrantClient = new QdrantClient({
+//   url: "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io:6333",
+//   apiKey: "Nygu4XKFKDhPxO47WOuaY_g2YsX3XTFacn39AvxaeOwtZ2Qnjbh46A"
+// })
 
 // Collection name
-const COLLECTION_NAME = "leaf_data_v2"
+// const COLLECTION_NAME = "leaf_data_v2"
 
 // Initialize embedding pipeline (make it globally accessible)
 let embeddingPipeline
@@ -74,31 +72,31 @@ async function getEmbedding(text) {
 }
 
 // Search Qdrant for relevant chunks
-async function searchQdrant(query, sourceFilter = null, limit = 5) {
-  try {
-    const queryVector = await getEmbedding(query)
-    const filter = sourceFilter ? { must: [{ key: "source", match: { value: sourceFilter } }] } : undefined
+// async function searchQdrant(query, sourceFilter = null, limit = 5) {
+//   try {
+//     const queryVector = await getEmbedding(query)
+//     const filter = sourceFilter ? { must: [{ key: "source", match: { value: sourceFilter } }] } : undefined
 
-    const searchResult = await qdrantClient.search(COLLECTION_NAME, {
-      vector: queryVector,
-      filter: filter,
-      limit: limit,
-      with_payload: true,
-    })
+//     const searchResult = await qdrantClient.search(COLLECTION_NAME, {
+//       vector: queryVector,
+//       filter: filter,
+//       limit: limit,
+//       with_payload: true,
+//     })
 
-    return searchResult.map(result => ({
-      id: result.id,
-      source: result.payload.source,
-      filePath: result.payload.file_path || `data\\${result.payload.source}.pdf`,
-      chunkIndex: result.payload.chunk_index,
-      text: result.payload.text || result.payload.content,
-      score: result.score,
-    }))
-  } catch (error) {
-    console.error("Error searching Qdrant:", error)
-    return []
-  }
-}
+//     return searchResult.map(result => ({
+//       id: result.id,
+//       source: result.payload.source,
+//       filePath: result.payload.file_path || `data\\${result.payload.source}.pdf`,
+//       chunkIndex: result.payload.chunk_index,
+//       text: result.payload.text || result.payload.content,
+//       score: result.score,
+//     }))
+//   } catch (error) {
+//     console.error("Error searching Qdrant:", error)
+//     return []
+//   }
+// }
 
 // Helper function to initialize Tavily
 function initTavily(apiKey) {
@@ -378,7 +376,8 @@ export default defineEventHandler(async (event) => {
       const conversationContext = await getConversationContext(threadId, prisma)
       
       if (!isValid) {
-        aiResponse = `I'm Leaf, an AI assistant specialized in climate change and environmental sustainability. While I can help with general conversations and tasks, I'd be most helpful discussing climate-related topics. How can I assist you today?`        
+        aiResponse = `I'm Leaf, an AI assistant specialized in climate change and environmental sustainability. While I can help with general conversations and tasks, I'd be most helpful discussing climate-related topics. How can I assist you today?`
+        
         const savedMessage = await prisma.message.create({
           data: {
             content: aiResponse,
@@ -485,7 +484,8 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
 
         // Perform vector search
         console.log("[Research Pipeline] Starting vector search...")
-        const vectorSearchResults = await searchQdrant(message, null, 5)
+        // const vectorSearchResults = await searchQdrant(message, null, 5)
+        const vectorSearchResults = [] // Empty array instead of Qdrant search
         console.log("[Research Pipeline] Vector search complete. Results:", vectorSearchResults.length)
 
         console.log('[Research Pipeline] Preparing source details for prompt...')
