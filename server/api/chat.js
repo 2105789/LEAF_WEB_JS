@@ -36,8 +36,10 @@ const conversationCache = new Map()
 
 // Qdrant client configuration
 const qdrantClient = new QdrantClient({
-  url: "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io:6333",
-  apiKey: "Nygu4XKFKDhPxO47WOuaY_g2YsX3XTFacn39AvxaeOwtZ2Qnjbh46A"
+  url: process.env.QDRANT_URL || "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io",
+  apiKey: process.env.QDRANT_API_KEY || "Nygu4XKFKDhPxO47WOuaY_g2YsX3XTFacn39AvxaeOwtZ2Qnjbh46A",
+  port: process.env.QDRANT_PORT || 443,
+  https: true
 })
 
 // Collection name
@@ -376,8 +378,7 @@ export default defineEventHandler(async (event) => {
       const conversationContext = await getConversationContext(threadId, prisma)
       
       if (!isValid) {
-        aiResponse = `I'm Leaf, an AI assistant specialized in climate change and environmental sustainability. While I can help with general conversations and tasks, I'd be most helpful discussing climate-related topics. How can I assist you today?`
-        
+        aiResponse = `I'm Leaf, an AI assistant specialized in climate change and environmental sustainability. While I can help with general conversations and tasks, I'd be most helpful discussing climate-related topics. How can I assist you today?`        
         const savedMessage = await prisma.message.create({
           data: {
             content: aiResponse,
