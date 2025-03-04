@@ -1,15 +1,19 @@
 <template>
-  <div class="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-teal-50 to-indigo-50 p-6">
-    <div class="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 transform transition-all duration-300 hover:shadow-2xl">
-      <h1 class="text-3xl font-bold text-center text-gray-800 mb-8">Welcome Back</h1>
+  <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-teal-50 to-indigo-50 p-4 sm:p-6">
+    <div class="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 sm:p-8 transform transition-all duration-300 hover:shadow-2xl mx-auto">
+      <div class="flex justify-center mb-6">
+        <img src="/logo.png" alt="Logo" class="h-12 object-contain" />
+      </div>
       
-      <form @submit.prevent="handleLogin" class="space-y-6">
+      <h1 class="text-2xl sm:text-3xl font-bold text-center text-gray-800 mb-6">Welcome Back</h1>
+      
+      <form @submit.prevent="handleLogin" class="space-y-5">
         <div class="space-y-2">
-          <label class="text-sm font-medium text-gray-700">Email</label>
+          <label class="text-sm font-medium text-gray-700 block">Email</label>
           <input 
             v-model="email" 
             type="email" 
-            class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all duration-200"
+            class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all duration-200"
             placeholder="Enter your email"
             required
             :disabled="isProcessing"
@@ -17,11 +21,11 @@
         </div>
         
         <div class="space-y-2">
-          <label class="text-sm font-medium text-gray-700">Password</label>
+          <label class="text-sm font-medium text-gray-700 block">Password</label>
           <input 
             v-model="password" 
             type="password" 
-            class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all duration-200"
+            class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all duration-200"
             placeholder="Enter your password"
             required
             :disabled="isProcessing"
@@ -44,7 +48,7 @@
         </button>
       </form>
 
-      <div class="relative my-8">
+      <div class="relative my-6">
         <div class="absolute inset-0 flex items-center">
           <div class="w-full border-t border-gray-200"></div>
         </div>
@@ -55,7 +59,7 @@
 
       <button 
         @click="handleGoogleLogin"
-        class="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
+        class="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
         :disabled="isProcessing"
       >
         <img src="https://www.google.com/favicon.ico" alt="Google" class="w-5 h-5" />
@@ -69,7 +73,7 @@
         <span v-else class="text-gray-700 font-medium">Google</span>
       </button>
 
-      <p class="mt-8 text-center text-gray-600">
+      <p class="mt-6 text-center text-gray-600">
         Don't have an account?
         <nuxt-link to="/signup" class="text-teal-600 font-medium hover:text-teal-700 transition-colors duration-200">
           Create account

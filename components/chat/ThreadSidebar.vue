@@ -2,8 +2,8 @@
 <template>
   <div class="w-72 bg-white border-r border-gray-200 flex flex-col h-full">
     <!-- Logo -->
-    <div class="shrink-0 h-14 border-b border-gray-200 flex items-center px-4">
-      <img src="/logo.png" alt="Logo" class="border-none h-10 object-contain">
+    <div class="shrink-0 h-16 border-b border-gray-200 flex items-center justify-center">
+      <img src="/logo.png" alt="Logo" class="h-10 object-contain">
     </div>
 
     <!-- Threads List -->
@@ -79,7 +79,7 @@
       <!-- New Thread Button -->
       <button 
         @click="$emit('create-thread')"
-        class="w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors flex items-center gap-2 text-teal-600 border-b border-gray-100"
+        class="w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors flex items-center gap-2 text-teal-600 border-b border-gray-100 font-medium"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
