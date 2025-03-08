@@ -40,6 +40,19 @@ const qdrantClient = new QdrantClient({
   apiKey: "Nygu4XKFKDhPxO47WOuaY_g2YsX3XTFacn39AvxaeOwtZ2Qnjbh46A"
 })
 
+// Add detailed logging for Qdrant connection
+try {
+  console.log("Initializing Qdrant client with URL:", "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io:6333")
+  // Test connection on startup
+  qdrantClient.getCollections().then(() => {
+    console.log("Successfully connected to Qdrant")
+  }).catch(err => {
+    console.error("Failed to connect to Qdrant on startup:", err.message, err.stack)
+  })
+} catch (error) {
+  console.error("Error initializing Qdrant client:", error.message, error.stack)
+}
+
 // Collection name
 const COLLECTION_NAME = "leaf_data_v2"
 
@@ -48,9 +61,11 @@ let embeddingPipeline
 
 async function initializeEmbeddingPipeline() {
   try {
+    console.log("Initializing embedding pipeline...")
     embeddingPipeline = await pipeline('feature-extraction', 'Xenova/paraphrase-mpnet-base-v2')
+    console.log("Embedding pipeline initialized successfully")
   } catch (error) {
-    console.error("Error initializing embedding pipeline:", error)
+    console.error("Error initializing embedding pipeline:", error.message, error.stack)
     throw error
   }
 }
@@ -58,15 +73,18 @@ async function initializeEmbeddingPipeline() {
 async function getEmbedding(text) {
   try {
     if (!embeddingPipeline) {
+      console.log("Embedding pipeline not initialized, initializing now...")
       await initializeEmbeddingPipeline()
     }
+    console.log("Generating embedding for text:", text.substring(0, 50) + "...")
     const output = await embeddingPipeline(text, {
       pooling: 'mean',
       normalize: true,
     })
+    console.log("Embedding generated successfully, dimension:", output.data.length)
     return Array.from(output.data)
   } catch (error) {
-    console.error("Error generating embedding:", error)
+    console.error("Error generating embedding:", error.message, error.stack)
     throw error
   }
 }
@@ -74,15 +92,24 @@ async function getEmbedding(text) {
 // Search Qdrant for relevant chunks
 async function searchQdrant(query, sourceFilter = null, limit = 5) {
   try {
+    console.log(`Searching Qdrant collection '${COLLECTION_NAME}' for query: ${query.substring(0, 50)}...`)
+    console.log(`Parameters: sourceFilter=${sourceFilter}, limit=${limit}`)
+    
+    console.log("Generating query embedding...")
     const queryVector = await getEmbedding(query)
+    console.log("Query embedding generated successfully")
+    
     const filter = sourceFilter ? { must: [{ key: "source", match: { value: sourceFilter } }] } : undefined
+    console.log("Using filter:", JSON.stringify(filter))
 
+    console.log("Executing Qdrant search...")
     const searchResult = await qdrantClient.search(COLLECTION_NAME, {
       vector: queryVector,
       filter: filter,
       limit: limit,
       with_payload: true,
     })
+    console.log(`Search successful, found ${searchResult.length} results`)
 
     return searchResult.map(result => ({
       id: result.id,
@@ -93,54 +120,10 @@ async function searchQdrant(query, sourceFilter = null, limit = 5) {
       score: result.score,
     }))
   } catch (error) {
-    console.error("Error searching Qdrant:", error)
+    console.error("Error searching Qdrant:", error.message)
+    console.error("Error stack:", error.stack)
+    console.error("Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
     return []
-  }
-}
-
-// Helper function to initialize Tavily
-function initTavily(apiKey) {
-  if (!tavilyClient && apiKey) {
-    try {
-      tavilyClient = tavily({ apiKey: apiKey })
-      return true
-    } catch (error) {
-      console.error('Failed to initialize Tavily client:', error)
-      return false
-    }
-  }
-  return !!tavilyClient
-}
-
-// Function to check if query is related to climate change or is a valid conversational query
-async function isClimateRelated(query, geminiApiKey) {
-  const topicModel = new ChatGoogleGenerativeAI({
-    apiKey: geminiApiKey,
-    model: "gemini-2.0-flash-lite",
-    temperature: 0,
-    maxRetries: 2,
-  })
-
-  const topicPrompt = `
-Analyze this query and determine if it falls into one of these categories:
-1. CLIMATE: Directly related to climate change, environmental sustainability, or related domains
-2. CONVERSATION: Basic conversation, context questions, or task-related queries (like summarizing PDFs, asking about previous discussions)
-3. OTHER: Completely unrelated topics
-
-Query: "${query}"
-
-Return ONLY "CLIMATE", "CONVERSATION", or "OTHER".`
-
-  try {
-    const topicResponse = await topicModel.invoke([["human", topicPrompt]])
-    const result = topicResponse.content.trim().toUpperCase()
-    return { 
-      isValid: result === "CLIMATE" || result === "CONVERSATION",
-      type: result
-    }
-  } catch (error) {
-    console.error("Error checking query type:", error)
-    return { isValid: true, type: "CONVERSATION" }
   }
 }
 
@@ -187,6 +170,52 @@ Return ONLY a valid JSON object without any markdown formatting, code blocks, or
   } catch (error) {
     console.error("Error determining search parameters:", error)
     return { searchDepth: "advanced", timeRange: "year", includeImages: true, maxResults: 10 }
+  }
+}
+
+// Helper function to initialize Tavily
+function initTavily(apiKey) {
+  if (!tavilyClient && apiKey) {
+    try {
+      tavilyClient = tavily({ apiKey: apiKey })
+      return true
+    } catch (error) {
+      console.error('Failed to initialize Tavily client:', error)
+      return false
+    }
+  }
+  return !!tavilyClient
+}
+
+// Function to check if query is related to climate change or is a valid conversational query
+async function isClimateRelated(query, geminiApiKey) {
+  const topicModel = new ChatGoogleGenerativeAI({
+    apiKey: geminiApiKey,
+    model: "gemini-2.0-flash-lite",
+    temperature: 0,
+    maxRetries: 2,
+  })
+
+  const topicPrompt = `
+Analyze this query and determine if it falls into one of these categories:
+1. CLIMATE: Directly related to climate change, environmental sustainability, or related domains
+2. CONVERSATION: Basic conversation, context questions, or task-related queries (like summarizing PDFs, asking about previous discussions)
+3. OTHER: Completely unrelated topics
+
+Query: "${query}"
+
+Return ONLY "CLIMATE", "CONVERSATION", or "OTHER".`
+
+  try {
+    const topicResponse = await topicModel.invoke([["human", topicPrompt]])
+    const result = topicResponse.content.trim().toUpperCase()
+    return { 
+      isValid: result === "CLIMATE" || result === "CONVERSATION",
+      type: result
+    }
+  } catch (error) {
+    console.error("Error checking query type:", error)
+    return { isValid: true, type: "CONVERSATION" }
   }
 }
 
