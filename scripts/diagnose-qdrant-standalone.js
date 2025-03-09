@@ -191,34 +191,9 @@ async function runDiagnostics() {
   return results
 }
 
-// This allows the file to be imported by Nuxt and used as an API endpoint
-export default defineEventHandler(async (event) => {
-  try {
-    const results = await runDiagnostics()
-    return results
-  } catch (error) {
-    console.error('Error running diagnostics:', error)
-    return {
-      error: 'Failed to run diagnostics',
-      message: error.message,
-      stack: error.stack
-    }
-  }
+// Run diagnostics when this file is executed directly
+runDiagnostics().then(results => {
+  console.log(JSON.stringify(results, null, 2))
+}).catch(error => {
+  console.error('Error running diagnostics:', error)
 })
-
-// This allows the file to be run directly from Node
-export async function handler() {
-  try {
-    const results = await runDiagnostics()
-    console.log(JSON.stringify(results, null, 2))
-    return results
-  } catch (error) {
-    console.error('Error running diagnostics:', error)
-    console.error(error)
-    return {
-      error: 'Failed to run diagnostics',
-      message: error.message,
-      stack: error.stack
-    }
-  }
-}

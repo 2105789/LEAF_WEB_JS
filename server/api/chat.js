@@ -35,37 +35,45 @@ let tavilyClient = null
 const conversationCache = new Map()
 
 // Qdrant client configuration
+const QDRANT_URL = "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io:6333"
+const QDRANT_API_KEY = "Nygu4XKFKDhPxO47WOuaY_g2YsX3XTFacn39AvxaeOwtZ2Qnjbh46A"
+const COLLECTION_NAME = "leaf_data_v2"
+
 const qdrantClient = new QdrantClient({
-  url: "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io:6333",
-  apiKey: "Nygu4XKFKDhPxO47WOuaY_g2YsX3XTFacn39AvxaeOwtZ2Qnjbh46A"
+  url: QDRANT_URL,
+  apiKey: QDRANT_API_KEY
 })
 
 // Add detailed logging for Qdrant connection
 try {
-  console.log("Initializing Qdrant client with URL:", "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io:6333")
+  console.log("[SETUP] Initializing Qdrant client with URL:", QDRANT_URL)
   // Test connection on startup
   qdrantClient.getCollections().then(() => {
-    console.log("Successfully connected to Qdrant")
+    console.log("[SETUP] Successfully connected to Qdrant")
   }).catch(err => {
-    console.error("Failed to connect to Qdrant on startup:", err.message, err.stack)
+    console.error("[SETUP] Failed to connect to Qdrant on startup:", err.message)
+    console.error("[SETUP] Error details:", JSON.stringify(err, Object.getOwnPropertyNames(err)))
+    console.error("[SETUP] Full error stack:", err.stack)
   })
 } catch (error) {
-  console.error("Error initializing Qdrant client:", error.message, error.stack)
+  console.error("[SETUP] Error initializing Qdrant client:", error.message)
+  console.error("[SETUP] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+  console.error("[SETUP] Full error stack:", error.stack)
 }
-
-// Collection name
-const COLLECTION_NAME = "leaf_data_v2"
 
 // Initialize embedding pipeline (make it globally accessible)
 let embeddingPipeline
 
 async function initializeEmbeddingPipeline() {
   try {
-    console.log("Initializing embedding pipeline...")
+    console.log("[EMBEDDING] Initializing embedding pipeline...")
     embeddingPipeline = await pipeline('feature-extraction', 'Xenova/paraphrase-mpnet-base-v2')
-    console.log("Embedding pipeline initialized successfully")
+    console.log("[EMBEDDING] Embedding pipeline initialized successfully")
+    return true
   } catch (error) {
-    console.error("Error initializing embedding pipeline:", error.message, error.stack)
+    console.error("[EMBEDDING] Error initializing embedding pipeline:", error.message)
+    console.error("[EMBEDDING] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+    console.error("[EMBEDDING] Full error stack:", error.stack)
     throw error
   }
 }
@@ -73,18 +81,20 @@ async function initializeEmbeddingPipeline() {
 async function getEmbedding(text) {
   try {
     if (!embeddingPipeline) {
-      console.log("Embedding pipeline not initialized, initializing now...")
+      console.log("[EMBEDDING] Embedding pipeline not initialized, initializing now...")
       await initializeEmbeddingPipeline()
     }
-    console.log("Generating embedding for text:", text.substring(0, 50) + "...")
+    console.log("[EMBEDDING] Generating embedding for text:", text.substring(0, 50) + "...")
     const output = await embeddingPipeline(text, {
       pooling: 'mean',
       normalize: true,
     })
-    console.log("Embedding generated successfully, dimension:", output.data.length)
+    console.log("[EMBEDDING] Embedding generated successfully, dimension:", output.data.length)
     return Array.from(output.data)
   } catch (error) {
-    console.error("Error generating embedding:", error.message, error.stack)
+    console.error("[EMBEDDING] Error generating embedding:", error.message)
+    console.error("[EMBEDDING] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+    console.error("[EMBEDDING] Full error stack:", error.stack)
     throw error
   }
 }
@@ -92,24 +102,24 @@ async function getEmbedding(text) {
 // Search Qdrant for relevant chunks
 async function searchQdrant(query, sourceFilter = null, limit = 5) {
   try {
-    console.log(`Searching Qdrant collection '${COLLECTION_NAME}' for query: ${query.substring(0, 50)}...`)
-    console.log(`Parameters: sourceFilter=${sourceFilter}, limit=${limit}`)
+    console.log(`[QDRANT] Searching Qdrant collection '${COLLECTION_NAME}' for query: ${query.substring(0, 50)}...`)
+    console.log(`[QDRANT] Parameters: sourceFilter=${sourceFilter}, limit=${limit}`)
     
-    console.log("Generating query embedding...")
+    console.log("[QDRANT] Generating query embedding...")
     const queryVector = await getEmbedding(query)
-    console.log("Query embedding generated successfully")
+    console.log("[QDRANT] Query embedding generated successfully")
     
     const filter = sourceFilter ? { must: [{ key: "source", match: { value: sourceFilter } }] } : undefined
-    console.log("Using filter:", JSON.stringify(filter))
+    console.log("[QDRANT] Using filter:", JSON.stringify(filter))
 
-    console.log("Executing Qdrant search...")
+    console.log("[QDRANT] Executing Qdrant search...")
     const searchResult = await qdrantClient.search(COLLECTION_NAME, {
       vector: queryVector,
       filter: filter,
       limit: limit,
       with_payload: true,
     })
-    console.log(`Search successful, found ${searchResult.length} results`)
+    console.log(`[QDRANT] Search successful, found ${searchResult.length} results`)
 
     return searchResult.map(result => ({
       id: result.id,
@@ -120,9 +130,9 @@ async function searchQdrant(query, sourceFilter = null, limit = 5) {
       score: result.score,
     }))
   } catch (error) {
-    console.error("Error searching Qdrant:", error.message)
-    console.error("Error stack:", error.stack)
-    console.error("Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+    console.error("[QDRANT] Error searching Qdrant:", error.message)
+    console.error("[QDRANT] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+    console.error("[QDRANT] Full error stack:", error.stack)
     return []
   }
 }
@@ -164,11 +174,15 @@ Return ONLY a valid JSON object without any markdown formatting, code blocks, or
 {"searchDepth":"advanced","timeRange":"year","includeImages":true,"maxResults":10}`
 
   try {
+    console.log("[SEARCH_PARAMS] Determining search parameters for query:", query.substring(0, 50) + "...")
     const paramResponse = await paramModel.invoke([["human", paramPrompt]])
     let responseContent = paramResponse.content.trim().replace(/```json\s*/g, "").replace(/```\s*$/g, "")
+    console.log("[SEARCH_PARAMS] Generated search parameters:", responseContent)
     return JSON.parse(responseContent)
   } catch (error) {
-    console.error("Error determining search parameters:", error)
+    console.error("[SEARCH_PARAMS] Error determining search parameters:", error.message)
+    console.error("[SEARCH_PARAMS] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+    console.error("[SEARCH_PARAMS] Full error stack:", error.stack)
     return { searchDepth: "advanced", timeRange: "year", includeImages: true, maxResults: 10 }
   }
 }
@@ -177,10 +191,14 @@ Return ONLY a valid JSON object without any markdown formatting, code blocks, or
 function initTavily(apiKey) {
   if (!tavilyClient && apiKey) {
     try {
+      console.log("[TAVILY] Initializing Tavily client...")
       tavilyClient = tavily({ apiKey: apiKey })
+      console.log("[TAVILY] Tavily client initialized successfully")
       return true
     } catch (error) {
-      console.error('Failed to initialize Tavily client:', error)
+      console.error('[TAVILY] Failed to initialize Tavily client:', error.message)
+      console.error("[TAVILY] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+      console.error("[TAVILY] Full error stack:", error.stack)
       return false
     }
   }
@@ -207,14 +225,18 @@ Query: "${query}"
 Return ONLY "CLIMATE", "CONVERSATION", or "OTHER".`
 
   try {
+    console.log("[TOPIC] Determining topic for query:", query.substring(0, 50) + "...")
     const topicResponse = await topicModel.invoke([["human", topicPrompt]])
     const result = topicResponse.content.trim().toUpperCase()
+    console.log("[TOPIC] Determined topic:", result)
     return { 
       isValid: result === "CLIMATE" || result === "CONVERSATION",
       type: result
     }
   } catch (error) {
-    console.error("Error checking query type:", error)
+    console.error("[TOPIC] Error checking query type:", error.message)
+    console.error("[TOPIC] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+    console.error("[TOPIC] Full error stack:", error.stack)
     return { isValid: true, type: "CONVERSATION" }
   }
 }
@@ -239,13 +261,17 @@ Query: "${query}"
 Return ONLY the category name, nothing else. No explanations.`
 
   try {
+    console.log("[ROUTER] Routing query:", query.substring(0, 50) + "...")
     const routerResponse = await routerModel.invoke([["human", routerPrompt]])
     const classification = routerResponse.content.trim().toUpperCase()
+    console.log("[ROUTER] Classified query:", classification)
     if (classification.includes("CASUAL")) return "CASUAL_CONVERSATION"
     if (classification.includes("RESEARCH")) return "RESEARCH_QUESTION"
     return "GENERAL_QUESTION"
   } catch (error) {
-    console.error("Error in query routing:", error)
+    console.error("[ROUTER] Error in query routing:", error.message)
+    console.error("[ROUTER] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+    console.error("[ROUTER] Full error stack:", error.stack)
     return "GENERAL_QUESTION"
   }
 }
@@ -253,7 +279,7 @@ Return ONLY the category name, nothing else. No explanations.`
 // Function to extract and format sources from search results
 function extractSourcesFromTavily(searchResults) {
   if (!searchResults || !searchResults.results || !Array.isArray(searchResults.results)) {
-    console.error("Invalid search results structure")
+    console.error("[TAVILY] Invalid search results structure")
     return { webSources: [], imageSources: [] }
   }
 
@@ -299,12 +325,14 @@ async function extractTextFromPDF(pdfBuffer) {
     try {
       unlinkSync(tempFilePath)
     } catch (cleanupError) {
-      console.warn('Failed to clean up temporary PDF file:', cleanupError)
+      console.warn('[PDF] Failed to clean up temporary PDF file:', cleanupError)
     }
     
     return docs.length > 0 ? docs[0].pageContent : ""
   } catch (error) {
-    console.error('Error extracting text from PDF:', error)
+    console.error('[PDF] Error extracting text from PDF:', error.message)
+    console.error("[PDF] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+    console.error("[PDF] Full error stack:", error.stack)
     return ""
   }
 }
@@ -389,9 +417,9 @@ export default defineEventHandler(async (event) => {
             throw new Error('Invalid PDF format')
           }
           pdfContent = await extractTextFromPDF(buffer)
-          console.log('Successfully extracted PDF content:', pdfContent.slice(0, 200) + '...')
+          console.log('[PDF] Successfully extracted PDF content:', pdfContent.slice(0, 200) + '...')
         } catch (error) {
-          console.error('Error processing PDF:', error)
+          console.error('[PDF] Error processing PDF:', error)
         }
       }
 
@@ -462,10 +490,10 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
         
       } else {
         processingState = 'research-pipeline'
-        console.log('[Research Pipeline] Starting research pipeline processing...')
+        console.log('[RESEARCH_PIPELINE] Starting research pipeline processing...')
         
         let searchParams = await determineSearchParameters(message, config.geminiApiKey)
-        console.log('[Research Pipeline] Search parameters determined:', searchParams)
+        console.log('[RESEARCH_PIPELINE] Search parameters determined:', searchParams)
         
         const searchOptions = {
           searchDepth: searchParams.searchDepth || "advanced",
@@ -495,28 +523,28 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
 
         // Perform web search
         if (enableWebSearch && tavilyClient) {
-          console.log('[Research Pipeline] Starting Tavily web search...')
+          console.log('[RESEARCH_PIPELINE] Starting Tavily web search...')
           try {
             webSearchResults = await tavilyClient.search(message, searchOptions)
-            console.log("[Research Pipeline] Tavily Search completed successfully")
+            console.log("[RESEARCH_PIPELINE] Tavily Search completed successfully")
           } catch (searchError) {
-            console.error("[Research Pipeline] Error in Tavily search:", searchError)
+            console.error("[RESEARCH_PIPELINE] Error in Tavily search:", searchError)
             webSearchResults = { results: [], images: [] }
           }
         } else {
-          console.log('[Research Pipeline] Web search skipped - enableWebSearch:', enableWebSearch, 'tavilyClient:', !!tavilyClient)
+          console.log('[RESEARCH_PIPELINE] Web search skipped - enableWebSearch:', enableWebSearch, 'tavilyClient:', !!tavilyClient)
         }
 
-        console.log('[Research Pipeline] Extracting sources from search results...')
+        console.log('[RESEARCH_PIPELINE] Extracting sources from search results...')
         const { webSources, imageSources } = extractSourcesFromTavily(webSearchResults)
-        console.log('[Research Pipeline] Sources extracted - Web sources:', webSources.length, 'Image sources:', imageSources.length)
+        console.log('[RESEARCH_PIPELINE] Sources extracted - Web sources:', webSources.length, 'Image sources:', imageSources.length)
 
         // Perform vector search
-        console.log("[Research Pipeline] Starting vector search...")
+        console.log("[RESEARCH_PIPELINE] Starting vector search...")
         const vectorSearchResults = await searchQdrant(message, null, 5)
-        console.log("[Research Pipeline] Vector search complete. Results:", vectorSearchResults.length)
+        console.log("[RESEARCH_PIPELINE] Vector search complete. Results:", vectorSearchResults.length)
 
-        console.log('[Research Pipeline] Preparing source details for prompt...')
+        console.log('[RESEARCH_PIPELINE] Preparing source details for prompt...')
         const webSourcesDetails = webSources.map(source =>
           `[${source.index}] ${source.title}\nURL: ${source.url}\nContent: ${source.content.substring(0, 1000)}${source.content.length > 1000 ? '...' : ''}`
         ).join('\n\n')
@@ -608,7 +636,7 @@ Follow these formatting requirements exactly:
      ${vectorSearchResults.map(s => `[V${vectorSearchResults.indexOf(s) + 1}] ${s.source} - Chunk ${s.chunkIndex} - ${s.filePath}`).join('\n')}
      </vectorsources>`
 
-        console.log('[Research Pipeline] Initializing Gemini model for final response...')
+        console.log('[RESEARCH_PIPELINE] Initializing Gemini model for final response...')
         const leafExpModel = new ChatGoogleGenerativeAI({
           apiKey: config.geminiApiKey,
           model: "gemini-2.0-flash-exp",
@@ -616,15 +644,15 @@ Follow these formatting requirements exactly:
           maxRetries: 2,
         })
 
-        console.log('[Research Pipeline] Sending request to Gemini model...')
+        console.log('[RESEARCH_PIPELINE] Sending request to Gemini model...')
         const finalResponse = await leafExpModel.invoke([
           ["system", researchSystemMessage],
           ["human", combinedContext]
         ])
-        console.log('[Research Pipeline] Received response from Gemini model')
+        console.log('[RESEARCH_PIPELINE] Received response from Gemini model')
         
         aiResponse = cleanMarkdownResponse(finalResponse.content)
-        console.log('[Research Pipeline] Response cleaned and ready for database')
+        console.log('[RESEARCH_PIPELINE] Response cleaned and ready for database')
         
       }
 
@@ -652,7 +680,9 @@ Follow these formatting requirements exactly:
       }
 
     } catch (error) {
-      console.error('AI processing error:', error)
+      console.error('[RESEARCH_PIPELINE] AI processing error:', error.message)
+      console.error("[RESEARCH_PIPELINE] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+      console.error("[RESEARCH_PIPELINE] Full error stack:", error.stack)
       
       if (error.message?.includes('API key')) {
         event.res.statusCode = 500
@@ -673,7 +703,9 @@ Follow these formatting requirements exactly:
       return { error: 'Failed to generate response: ' + error.message }
     }
   } catch (error) {
-    console.error('Chat API error:', error)
+    console.error('[CHAT_API] Chat API error:', error.message)
+    console.error("[CHAT_API] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
+    console.error("[CHAT_API] Full error stack:", error.stack)
     event.res.statusCode = 500
     return { error: 'Error processing chat request' }
   }

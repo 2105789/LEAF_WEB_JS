@@ -7,7 +7,8 @@
     "build": "nuxt build",
     "start": "nuxt start",
     "prisma": "prisma",
-    "reset-db": "node server/scripts/resetDatabase.js"
+    "reset-db": "node server/scripts/resetDatabase.js",
+    "diagnose-qdrant": "node scripts/diagnose-qdrant-standalone.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.22.0",
