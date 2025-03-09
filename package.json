@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
-    "start": "nuxt start",
+    "start": "node scripts/start-with-diagnostics.js",
+    "start:original": "nuxt start",
     "prisma": "prisma",
     "reset-db": "node server/scripts/resetDatabase.js",
     "diagnose-qdrant": "node scripts/diagnose-qdrant-standalone.js"
