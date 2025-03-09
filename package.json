@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "nuxt dev",
+    "dev:diagnostics": "node scripts/start-with-diagnostics.js",
     "build": "nuxt build",
     "start": "node scripts/start-with-diagnostics.js",
     "start:original": "nuxt start",

@@ -1,8 +1,5 @@
 import { spawn } from 'child_process';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 import { QdrantClient } from "@qdrant/js-client-rest";
-import { pipeline } from '@xenova/transformers';
 import axios from 'axios';
 
 // Qdrant client configuration
@@ -15,54 +12,6 @@ const qdrantClient = new QdrantClient({
   url: QDRANT_URL,
   apiKey: QDRANT_API_KEY
 });
-
-// Initialize embedding pipeline
-let embeddingPipeline;
-
-async function initializeEmbeddingPipeline() {
-  try {
-    console.log("[STARTUP] Initializing embedding pipeline...");
-    embeddingPipeline = await pipeline('feature-extraction', 'Xenova/paraphrase-mpnet-base-v2');
-    console.log("[STARTUP] Embedding pipeline initialized successfully");
-    return { success: true };
-  } catch (error) {
-    console.error("[STARTUP] Error initializing embedding pipeline:", error);
-    console.error("[STARTUP] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
-    return {
-      error: true,
-      stage: "embedding_pipeline_init",
-      message: error.message,
-      stack: error.stack
-    };
-  }
-}
-
-async function getEmbedding(text) {
-  try {
-    console.log("[STARTUP] Generating embedding for text:", text.substring(0, 50) + "...");
-    if (!embeddingPipeline) {
-      const initResult = await initializeEmbeddingPipeline();
-      if (initResult.error) return initResult;
-    }
-    
-    const output = await embeddingPipeline(text, {
-      pooling: 'mean',
-      normalize: true,
-    });
-    
-    console.log("[STARTUP] Embedding generated successfully, dimension:", output.data.length);
-    return { success: true, embedding: Array.from(output.data) };
-  } catch (error) {
-    console.error("[STARTUP] Error generating embedding:", error);
-    console.error("[STARTUP] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
-    return {
-      error: true,
-      stage: "embedding_generation",
-      message: error.message,
-      stack: error.stack
-    };
-  }
-}
 
 // Test direct HTTP connectivity to Qdrant
 async function testQdrantConnectivity() {
@@ -112,30 +61,68 @@ async function testQdrantClient() {
   }
 }
 
-// Test search functionality
+// Test text-based search functionality
 async function testQdrantSearch(query = "climate change") {
   try {
-    console.log("[STARTUP] Testing Qdrant search functionality with query:", query);
+    console.log("[STARTUP] Testing Qdrant text search functionality with query:", query);
     
-    // Get embedding for query
-    const embeddingResult = await getEmbedding(query);
-    if (embeddingResult.error) return embeddingResult;
+    // Prepare filter
+    let filter = {};
     
-    // Perform search
-    console.log("[STARTUP] Searching Qdrant with generated embedding...");
-    const searchResult = await qdrantClient.search(COLLECTION_NAME, {
-      vector: embeddingResult.embedding,
-      limit: 3,
+    // Get documents from collection with pagination
+    const scrollRequest = {
+      limit: 100, // Get documents in batches
       with_payload: true,
+      filter: filter
+    };
+    
+    // Get first batch
+    console.log("[STARTUP] Retrieving documents for text search...");
+    let scrollResult = await qdrantClient.scroll(COLLECTION_NAME, scrollRequest);
+    let allDocuments = scrollResult.points;
+    
+    // Limit to 100 documents for startup test
+    if (allDocuments.length > 100) {
+      allDocuments = allDocuments.slice(0, 100);
+    }
+    
+    console.log(`[STARTUP] Retrieved ${allDocuments.length} documents for text search`);
+    
+    // Simple text matching function
+    const queryTerms = query.toLowerCase().split(/\s+/);
+    const scoredDocuments = allDocuments.map(doc => {
+      const text = (doc.payload.text || doc.payload.content || "").toLowerCase();
+      
+      // Calculate a simple relevance score based on term frequency
+      let score = 0;
+      queryTerms.forEach(term => {
+        const regex = new RegExp(term, 'g');
+        const matches = text.match(regex);
+        if (matches) {
+          score += matches.length;
+        }
+      });
+      
+      return {
+        id: doc.id,
+        score: score,
+        payload: doc.payload
+      };
     });
     
-    console.log("[STARTUP] Search successful, found", searchResult.length, "results");
+    // Sort by score and take top results
+    const results = scoredDocuments
+      .filter(doc => doc.score > 0) // Only include documents with matches
+      .sort((a, b) => b.score - a.score) // Sort by score descending
+      .slice(0, 3); // Take top 3 results
+    
+    console.log(`[STARTUP] Text search successful, found ${results.length} relevant results`);
     return {
       success: true,
-      resultsCount: searchResult.length
+      resultsCount: results.length
     };
   } catch (error) {
-    console.error("[STARTUP] Error performing Qdrant search:", error);
+    console.error("[STARTUP] Error performing Qdrant text search:", error);
     console.error("[STARTUP] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
     return {
       error: true,
@@ -168,36 +155,55 @@ async function runStartupSequence() {
   }
   console.log("[STARTUP] ✅ Qdrant client API check passed");
   
-  const embeddingResult = await initializeEmbeddingPipeline();
-  if (!embeddingResult.success) {
-    console.error("[STARTUP] ❌ Failed to initialize embedding pipeline. Vector search will not work.");
-    console.error("[STARTUP] Details:", JSON.stringify(embeddingResult));
-    startNuxtAnyway();
-    return;
-  }
-  console.log("[STARTUP] ✅ Embedding pipeline initialized successfully");
-  
   const searchResult = await testQdrantSearch();
   if (!searchResult.success) {
-    console.error("[STARTUP] ❌ Failed to perform search test. Vector search may not work correctly.");
+    console.error("[STARTUP] ❌ Failed to perform text search test. Vector search may not work correctly.");
     console.error("[STARTUP] Details:", JSON.stringify(searchResult));
     startNuxtAnyway();
     return;
   }
-  console.log("[STARTUP] ✅ Search test passed, found", searchResult.resultsCount, "results");
+  console.log("[STARTUP] ✅ Text search test passed, found", searchResult.resultsCount, "results");
   
   console.log("\n✅ ALL DIAGNOSTICS PASSED! Starting Nuxt application...\n");
   startNuxt();
 }
 
 function startNuxt() {
-  const nuxt = spawn('nuxt', ['start'], {
+  console.log("\n[STARTUP] Checking if application has been built...");
+  
+  // First try to run in production mode, if it fails, fall back to dev mode
+  const nuxt = spawn('npm', ['run', 'start:original'], {
     stdio: 'inherit',
     shell: true
   });
   
+  nuxt.on('error', (error) => {
+    console.error(`[STARTUP] Error starting Nuxt in production mode:`, error);
+    console.log(`[STARTUP] Falling back to development mode...`);
+    startNuxtDev();
+  });
+  
   nuxt.on('close', (code) => {
-    console.log(`Nuxt process exited with code ${code}`);
+    if (code !== 0) {
+      console.log(`[STARTUP] Nuxt production start failed with code ${code}`);
+      console.log(`[STARTUP] Falling back to development mode...`);
+      startNuxtDev();
+    } else {
+      console.log(`[STARTUP] Nuxt process exited with code ${code}`);
+      process.exit(code);
+    }
+  });
+}
+
+function startNuxtDev() {
+  console.log("[STARTUP] Starting Nuxt in development mode...");
+  const nuxtDev = spawn('npm', ['run', 'dev'], {
+    stdio: 'inherit',
+    shell: true
+  });
+  
+  nuxtDev.on('close', (code) => {
+    console.log(`[STARTUP] Nuxt dev process exited with code ${code}`);
     process.exit(code);
   });
 }

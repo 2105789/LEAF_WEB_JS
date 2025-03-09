@@ -4,11 +4,11 @@ import jwt from 'jsonwebtoken'
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai"
 import { tavily } from "@tavily/core"
 import { QdrantClient } from "@qdrant/js-client-rest"
-import { pipeline } from '@xenova/transformers'
 import { writeFileSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf"
+import axios from 'axios'
 
 const prisma = new PrismaClient()
 
@@ -61,78 +61,98 @@ try {
   console.error("[SETUP] Full error stack:", error.stack)
 }
 
-// Initialize embedding pipeline (make it globally accessible)
-let embeddingPipeline
-
-async function initializeEmbeddingPipeline() {
-  try {
-    console.log("[EMBEDDING] Initializing embedding pipeline...")
-    embeddingPipeline = await pipeline('feature-extraction', 'Xenova/paraphrase-mpnet-base-v2')
-    console.log("[EMBEDDING] Embedding pipeline initialized successfully")
-    return true
-  } catch (error) {
-    console.error("[EMBEDDING] Error initializing embedding pipeline:", error.message)
-    console.error("[EMBEDDING] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
-    console.error("[EMBEDDING] Full error stack:", error.stack)
-    throw error
-  }
-}
-
-async function getEmbedding(text) {
-  try {
-    if (!embeddingPipeline) {
-      console.log("[EMBEDDING] Embedding pipeline not initialized, initializing now...")
-      await initializeEmbeddingPipeline()
-    }
-    console.log("[EMBEDDING] Generating embedding for text:", text.substring(0, 50) + "...")
-    const output = await embeddingPipeline(text, {
-      pooling: 'mean',
-      normalize: true,
-    })
-    console.log("[EMBEDDING] Embedding generated successfully, dimension:", output.data.length)
-    return Array.from(output.data)
-  } catch (error) {
-    console.error("[EMBEDDING] Error generating embedding:", error.message)
-    console.error("[EMBEDDING] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
-    console.error("[EMBEDDING] Full error stack:", error.stack)
-    throw error
-  }
-}
-
-// Search Qdrant for relevant chunks
+// Search Qdrant for relevant chunks using text search instead of vector search
 async function searchQdrant(query, sourceFilter = null, limit = 5) {
   try {
     console.log(`[QDRANT] Searching Qdrant collection '${COLLECTION_NAME}' for query: ${query.substring(0, 50)}...`)
     console.log(`[QDRANT] Parameters: sourceFilter=${sourceFilter}, limit=${limit}`)
     
-    console.log("[QDRANT] Generating query embedding...")
-    const queryVector = await getEmbedding(query)
-    console.log("[QDRANT] Query embedding generated successfully")
+    // Instead of vector search, we'll perform a text-based search
+    console.log("[QDRANT] Performing text-based search...")
     
-    const filter = sourceFilter ? { must: [{ key: "source", match: { value: sourceFilter } }] } : undefined
-    console.log("[QDRANT] Using filter:", JSON.stringify(filter))
-
-    console.log("[QDRANT] Executing Qdrant search...")
-    const searchResult = await qdrantClient.search(COLLECTION_NAME, {
-      vector: queryVector,
-      filter: filter,
-      limit: limit,
+    // Prepare filter
+    let filter = {};
+    
+    if (sourceFilter) {
+      filter = { 
+        must: [
+          { key: "source", match: { value: sourceFilter } }
+        ]
+      };
+    }
+    
+    // Get all documents from collection with pagination
+    // Since Qdrant doesn't have native text search, we'll retrieve documents and filter them
+    const scrollRequest = {
+      limit: 100, // Get documents in batches
       with_payload: true,
-    })
-    console.log(`[QDRANT] Search successful, found ${searchResult.length} results`)
-
-    return searchResult.map(result => ({
+      filter: filter
+    };
+    
+    // Get first batch
+    let scrollResult = await qdrantClient.scroll(COLLECTION_NAME, scrollRequest);
+    let allDocuments = scrollResult.points;
+    
+    // Continue scrolling if there are more documents
+    while (scrollResult.next_page_offset) {
+      scrollRequest.offset = scrollResult.next_page_offset;
+      scrollResult = await qdrantClient.scroll(COLLECTION_NAME, scrollRequest);
+      allDocuments = [...allDocuments, ...scrollResult.points];
+      
+      // Limit to 1000 documents max to avoid excessive processing
+      if (allDocuments.length > 1000) {
+        console.log("[QDRANT] Reached maximum document limit (1000) for text search");
+        break;
+      }
+    }
+    
+    console.log(`[QDRANT] Retrieved ${allDocuments.length} documents for text search`);
+    
+    // Simple text matching function
+    const queryTerms = query.toLowerCase().split(/\s+/);
+    const scoredDocuments = allDocuments.map(doc => {
+      const text = (doc.payload.text || doc.payload.content || "").toLowerCase();
+      
+      // Calculate a simple relevance score based on term frequency
+      let score = 0;
+      queryTerms.forEach(term => {
+        const regex = new RegExp(term, 'g');
+        const matches = text.match(regex);
+        if (matches) {
+          score += matches.length;
+        }
+      });
+      
+      return {
+        id: doc.id,
+        score: score,
+        payload: doc.payload
+      };
+    });
+    
+    // Sort by score and take top results
+    const results = scoredDocuments
+      .filter(doc => doc.score > 0) // Only include documents with matches
+      .sort((a, b) => b.score - a.score) // Sort by score descending
+      .slice(0, limit); // Take top N results
+    
+    console.log(`[QDRANT] Text search successful, found ${results.length} relevant results`);
+    
+    return results.map(result => ({
       id: result.id,
       source: result.payload.source,
       filePath: result.payload.file_path || `data\\${result.payload.source}.pdf`,
       chunkIndex: result.payload.chunk_index,
       text: result.payload.text || result.payload.content,
       score: result.score,
-    }))
+    }));
   } catch (error) {
     console.error("[QDRANT] Error searching Qdrant:", error.message)
     console.error("[QDRANT] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
     console.error("[QDRANT] Full error stack:", error.stack)
+    
+    // Fallback to empty results
+    console.log("[QDRANT] Returning empty results due to search error");
     return []
   }
 }
