@@ -1,270 +1,207 @@
 <!-- Chat Messages Component -->
 <template>
-  <div class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50" ref="messagesContainer">
-    <template v-if="selectedThread">
-      <div v-if="messages.length === 0" class="h-full flex items-center justify-center">
-        <div class="max-w-5xl w-full mx-auto space-y-6 -mt-20">
-          <h3 class="text-center text-lg text-gray-600 mb-8">Here are some suggestions to get started:</h3>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 px-4">
+  <div class="flex-1 overflow-y-auto bg-gray-50" ref="messagesContainer">
+    <!-- Empty state with suggestions -->
+    <div v-if="selectedThread && messages.length === 0" class="h-full flex items-center justify-center">
+      <div class="max-w-4xl w-full mx-auto p-4 space-y-6 -mt-20">
+        <h3 class="text-center text-lg text-gray-600 mb-6">Here are some suggestions to get started:</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div 
+            v-for="(suggestion, index) in suggestions" 
+            :key="index"
+            @click="handleSuggestionClick(suggestion)"
+            class="bg-white p-4 rounded-lg shadow-sm border border-gray-100 hover:border-teal-200 hover:shadow transition-all cursor-pointer transform hover:-translate-y-1"
+          >
+            <div class="text-2xl mb-2">{{ suggestion.emoji }}</div>
+            <h4 class="font-medium text-gray-900 mb-2">{{ suggestion.title }}</h4>
+            <p class="text-sm text-gray-600">{{ suggestion.question }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Messages with optimized rendering -->
+    <div v-else-if="selectedThread" class="p-4 space-y-4">
+      <div 
+        v-for="message in optimizedMessages" 
+        :key="message.id"
+        class="max-w-3xl mx-auto"
+      >
+        <div 
+          :class="[
+            'rounded-lg shadow-sm relative group transition-all py-3',
+            message.role === 'user' 
+              ? 'bg-teal-50 border border-teal-100' 
+              : 'bg-white border border-gray-100'
+          ]"
+        >
+          <div class="flex items-start gap-3 p-3">
+            <!-- Avatar -->
             <div 
-              v-for="(suggestion, index) in suggestions" 
-              :key="index"
-              @click="handleSuggestionClick(suggestion)"
-              class="bg-white p-6 rounded-lg shadow-sm border border-gray-100 hover:border-teal-200 hover:shadow-md transition-all cursor-pointer transform hover:-translate-y-1"
+              class="w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0"
+              :class="message.role === 'user' ? 'bg-teal-100 text-teal-600' : 'bg-emerald-50 text-emerald-600'"
             >
-              <div class="text-3xl mb-3">{{ suggestion.emoji }}</div>
-              <h4 class="font-medium text-gray-900 mb-2">{{ suggestion.title }}</h4>
-              <p class="text-sm text-gray-600">{{ suggestion.question }}</p>
+              {{ message.role === 'user' ? 'U' : 'L' }}
+            </div>
+            
+            <!-- Message Content -->
+            <div class="flex-1 min-w-0">
+              <div 
+                class="prose prose-sm max-w-none"
+                :class="message.role === 'user' ? 'text-teal-900' : 'text-gray-700'"
+                v-html="getProcessedContent(message)"
+              ></div>
+              
+              <!-- Sources Collapsible Section -->
+              <div v-if="message.role === 'assistant' && hasAnySources(message.content)" class="mt-3 space-y-2">
+                <!-- Web Sources -->
+                <div v-if="hasSources(message.content, 'web')" class="border rounded-lg overflow-hidden">
+                  <button 
+                    @click="toggleSourceType(message.id, 'web')"
+                    class="w-full px-3 py-2 text-left flex justify-between items-center bg-gray-50 hover:bg-gray-100 transition-colors"
+                  >
+                    <span class="font-medium text-sm">Web Sources ({{ countSources(message.content, 'web') }})</span>
+                    <svg 
+                      class="w-4 h-4 transform transition-transform"
+                      :class="isSourceTypeExpanded(message.id, 'web') ? 'rotate-180' : ''"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
+                    </svg>
+                  </button>
+                  <div v-show="isSourceTypeExpanded(message.id, 'web')" class="px-3 py-2 border-t text-sm">
+                    <ul class="space-y-1 text-sm pl-2">
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'web')" :key="i">
+                        <a v-if="isValidUrl(source)" :href="extractUrl(source)" target="_blank" rel="noopener noreferrer" 
+                           class="text-blue-600 hover:text-blue-800 hover:underline text-xs block truncate">
+                          {{ formatSource(source).title || formatSource(source).url }}
+                        </a>
+                        <span v-else>{{ source }}</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <!-- Image Sources -->
+                <div v-if="hasSources(message.content, 'image')" class="border rounded-lg overflow-hidden">
+                  <button 
+                    @click="toggleSourceType(message.id, 'image')"
+                    class="w-full px-3 py-2 text-left flex justify-between items-center bg-gray-50 hover:bg-gray-100 transition-colors"
+                  >
+                    <span class="font-medium text-sm">Image Sources ({{ countSources(message.content, 'image') }})</span>
+                    <svg 
+                      class="w-4 h-4 transform transition-transform"
+                      :class="isSourceTypeExpanded(message.id, 'image') ? 'rotate-180' : ''"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
+                    </svg>
+                  </button>
+                  <div v-show="isSourceTypeExpanded(message.id, 'image')" class="px-3 py-2 border-t text-sm">
+                    <ul class="space-y-1 text-sm pl-2">
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'image')" :key="i">
+                        <a v-if="isValidUrl(source)" :href="extractUrl(source)" target="_blank" rel="noopener noreferrer" 
+                           class="text-blue-600 hover:text-blue-800 hover:underline text-xs block truncate">
+                          {{ formatSource(source).title || formatSource(source).url }}
+                        </a>
+                        <span v-else>{{ source }}</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
+                <!-- Vector Sources -->
+                <div v-if="hasSources(message.content, 'vector')" class="border rounded-lg overflow-hidden">
+                  <button 
+                    @click="toggleSourceType(message.id, 'vector')"
+                    class="w-full px-3 py-2 text-left flex justify-between items-center bg-gray-50 hover:bg-gray-100 transition-colors"
+                  >
+                    <span class="font-medium text-sm">Document Sources ({{ countSources(message.content, 'vector') }})</span>
+                    <svg 
+                      class="w-4 h-4 transform transition-transform"
+                      :class="isSourceTypeExpanded(message.id, 'vector') ? 'rotate-180' : ''"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
+                    </svg>
+                  </button>
+                  <div v-show="isSourceTypeExpanded(message.id, 'vector')" class="px-3 py-2 border-t text-sm">
+                    <ul class="space-y-2 text-sm pl-2">
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'vector')" :key="i" class="pt-1">
+                        {{ source }}
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+              
+              <span class="text-xs mt-2 block" :class="message.role === 'user' ? 'text-teal-400' : 'text-gray-400'">
+                {{ formatDate(message.createdAt) }}
+              </span>
+            </div>
+            
+            <!-- Copy Button -->
+            <button 
+              v-if="message.role === 'assistant'"
+              @click="copyToClipboard(message.content)"
+              class="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 p-1"
+              title="Copy response"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+              </svg>
+            </button>
+          </div>
+          <!-- Copy Code Button (only shown when message has code) -->
+          <div 
+            v-if="message.role === 'assistant' && hasCodeBlock(message.content)"
+            class="border-t border-gray-50 bg-gray-50 py-1 px-3 rounded-b-lg flex justify-end"
+          >
+            <button 
+              @click="copyToClipboard(extractCode(message.content))"
+              class="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
+                <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" />
+              </svg>
+              Copy code
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Processing State (Simplified) -->
+    <div v-if="isLoading" class="max-w-3xl mx-auto p-4">
+      <div class="bg-white rounded-lg shadow-sm p-4 border border-gray-100">
+        <div class="flex items-start gap-3">
+          <div class="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-600 text-sm shrink-0">
+            {{ processingState === 'research' ? '🔍' : '⚡' }}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <div class="flex space-x-1">
+                <div class="h-2 w-2 bg-teal-300 rounded-full animate-pulse"></div>
+                <div class="h-2 w-2 bg-teal-300 rounded-full animate-pulse delay-75"></div>
+                <div class="h-2 w-2 bg-teal-300 rounded-full animate-pulse delay-150"></div>
+              </div>
+              <span class="text-sm text-gray-500 ml-2">
+                {{ processingState === 'research' ? 'Researching' : 'Generating' }}... {{ processingTime }}s
+              </span>
             </div>
           </div>
         </div>
       </div>
-      
-      <!-- Use transition-group for smooth animations when messages change -->
-      <transition-group 
-        name="message-fade" 
-        tag="div" 
-        class="space-y-4"
-        appear
-      >
-        <div 
-          v-for="message in visibleMessages" 
-          :key="message.id"
-          class="max-w-4xl mx-auto"
-        >
-          <div 
-            :class="[
-              'rounded-lg shadow-sm relative group transition-all pr-10 py-3',
-              message.role === 'user' 
-                ? 'bg-teal-50 bg-opacity-50 border border-teal-100' 
-                : 'bg-white border border-gray-100',
-              message.isProcessing ? 'opacity-75' : 'opacity-100'
-            ]"
-          >
-            <div class="flex items-start gap-3 p-4">
-              <div 
-                class="w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0"
-                :class="message.role === 'user' ? 'bg-teal-100 text-teal-600' : 'bg-emerald-50 text-emerald-600'"
-              >
-                {{ message.role === 'user' ? 'U' : 'L' }}
-              </div>
-              <div class="flex-1 min-w-0">
-                <div 
-                  class="prose prose-sm max-w-none"
-                  :class="[
-                    message.role === 'user' 
-                      ? 'prose-pre:bg-teal-50 prose-pre:border prose-pre:border-teal-100 text-teal-900' 
-                      : 'prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-100 text-gray-700'
-                  ]"
-                  v-html="getProcessedContent(message)"
-                ></div>
-
-                <!-- Sources Sections - Only render if expanded -->
-                <div v-if="message.role === 'assistant'" class="mt-4 space-y-2">
-                  <!-- Web Sources -->
-                  <div v-if="hasSources(message.content, 'web')" class="border rounded-lg">
-                    <button 
-                      @click="toggleSourceExpansion('web')"
-                      class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
-                    >
-                      <span class="font-medium text-sm">Web Sources</span>
-                      <svg 
-                        class="w-5 h-5 transform transition-transform"
-                        :class="sourcesExpanded.web ? 'rotate-180' : ''"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
-                      </svg>
-                    </button>
-                    <div v-show="sourcesExpanded.web" class="px-4 py-2 border-t">
-                      <ul class="space-y-2 text-sm">
-                        <li v-for="(source, index) in getSourcesIfExpanded(message.content, 'web')" :key="index" class="whitespace-normal break-all py-1">
-                          <template v-if="source.includes('http')">
-                            <div class="flex flex-col gap-1">
-                              <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
-                              <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
-                                {{ formatSource(source).url }}
-                              </a>
-                            </div>
-                          </template>
-                          <template v-else>
-                            {{ source }}
-                          </template>
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-
-                  <!-- Image Sources -->
-                  <div v-if="hasSources(message.content, 'image')" class="border rounded-lg">
-                    <button 
-                      @click="toggleSourceExpansion('image')"
-                      class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
-                    >
-                      <span class="font-medium text-sm">Image Sources</span>
-                      <svg 
-                        class="w-5 h-5 transform transition-transform"
-                        :class="sourcesExpanded.image ? 'rotate-180' : ''"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
-                      </svg>
-                    </button>
-                    <div v-show="sourcesExpanded.image" class="px-4 py-2 border-t">
-                      <ul class="space-y-2 text-sm">
-                        <li v-for="(source, index) in getSourcesIfExpanded(message.content, 'image')" :key="index" class="whitespace-normal break-all py-1">
-                          <template v-if="source.includes('http')">
-                            <div class="flex flex-col gap-1">
-                              <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
-                              <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
-                                {{ formatSource(source).url }}
-                              </a>
-                            </div>
-                          </template>
-                          <template v-else>
-                            {{ source }}
-                          </template>
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-
-                  <!-- Vector Sources -->
-                  <div v-if="hasSources(message.content, 'vector')" class="border rounded-lg">
-                    <button 
-                      @click="toggleSourceExpansion('vector')"
-                      class="w-full px-4 py-2 text-left flex justify-between items-center hover:bg-gray-50"
-                    >
-                      <span class="font-medium text-sm">Vector Sources</span>
-                      <svg 
-                        class="w-5 h-5 transform transition-transform"
-                        :class="sourcesExpanded.vector ? 'rotate-180' : ''"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
-                      </svg>
-                    </button>
-                    <div v-show="sourcesExpanded.vector" class="px-4 py-2 border-t">
-                      <ul class="space-y-2 text-sm">
-                        <li v-for="(source, index) in getSourcesIfExpanded(message.content, 'vector')" :key="index" class="whitespace-normal break-all py-1">
-                          <template v-if="source.includes('http')">
-                            <div class="flex flex-col gap-1">
-                              <span class="font-medium text-gray-700">{{ formatSource(source).title }}</span>
-                              <a :href="formatSource(source).url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-xs">
-                                {{ formatSource(source).url }}
-                              </a>
-                            </div>
-                          </template>
-                          <template v-else>
-                            {{ source }}
-                          </template>
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-
-                <span class="text-xs mt-2 block" :class="message.role === 'user' ? 'text-teal-400' : 'text-gray-400'">
-                  {{ formatDate(message.createdAt) }}
-                </span>
-              </div>
-              <button 
-                v-if="message.role === 'assistant' && !message.isProcessing"
-                @click="copyToClipboard(message.content)"
-                class="opacity-0 group-hover:opacity-100 transition-opacity absolute top-2 right-2 text-gray-400 hover:text-gray-600"
-                title="Copy response"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
-                  <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
-                </svg>
-              </button>
-            </div>
-            <div 
-              v-if="message.role === 'assistant' && hasCodeBlock(message.content) && !message.isProcessing"
-              class="border-t border-gray-50 bg-gray-50 p-2 rounded-b-lg flex justify-end"
-            >
-              <button 
-                @click="copyToClipboard(extractCode(message.content))"
-                class="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
-                  <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" />
-                </svg>
-                Copy code
-              </button>
-            </div>
-          </div>
-        </div>
-      </transition-group>
-
-      <!-- Processing States with improved transitions -->
-      <transition name="fade">
-        <div v-if="isLoading" class="max-w-3xl mx-auto space-y-4">
-          <!-- Initializing -->
-          <div v-if="processingState === 'initializing'" class="bg-white border border-gray-100 rounded-lg shadow-sm p-4 transition-all">
-            <div class="flex items-start gap-3">
-              <div class="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-600 text-sm shrink-0">
-                💭
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                  <span class="text-sm text-gray-400 ml-2 animate-pulse">Thinking...</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Research Processing -->
-          <div v-if="processingState === 'research'" class="bg-white border border-gray-100 rounded-lg shadow-sm p-4 transition-all">
-            <div class="flex items-start gap-3">
-              <div class="w-8 h-8 rounded-full bg-teal-50 flex items-center justify-center text-teal-600 text-sm shrink-0">
-                🔬
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                  <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse"></div>
-                  <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
-                  <div class="h-4 w-4 bg-teal-100 rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
-                  <span class="text-sm text-gray-400 ml-2">Researching... {{ processingTime }}s</span>
-                </div>
-                <div class="mt-2 space-y-2">
-                  <div class="h-4 bg-teal-50 rounded w-3/4 animate-pulse"></div>
-                  <div class="h-4 bg-teal-50 rounded w-1/2 animate-pulse"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- General Processing -->
-          <div v-if="processingState === 'general'" class="bg-white border border-gray-100 rounded-lg shadow-sm p-4 transition-all">
-            <div class="flex items-start gap-3">
-              <div class="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600 text-sm shrink-0">
-                ⚡
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                  <div class="h-4 w-4 bg-emerald-100 rounded-full animate-pulse"></div>
-                  <div class="h-4 w-4 bg-emerald-100 rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
-                  <div class="h-4 w-4 bg-emerald-100 rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
-                  <span class="text-sm text-gray-400 ml-2">Generating response... {{ processingTime }}s</span>
-                </div>
-                <div class="mt-2 space-y-2">
-                  <div class="h-4 bg-emerald-50 rounded w-3/4 animate-pulse"></div>
-                  <div class="h-4 bg-emerald-50 rounded w-1/2 animate-pulse"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </transition>
-    </template>
-    <div v-else class="h-full flex items-center justify-center">
-      <div class="bg-white p-8 rounded-lg shadow-sm border border-gray-100 max-w-md w-full text-center">
+    </div>
+    
+    <!-- No Thread Selected State -->
+    <div v-if="!selectedThread" class="h-full flex items-center justify-center p-4">
+      <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-100 max-w-md w-full text-center">
         <div class="text-4xl mb-4">💬</div>
         <h3 class="text-xl font-medium text-gray-900 mb-2">Select a Thread</h3>
         <p class="text-gray-500">Choose an existing thread from the sidebar or create a new one to start chatting.</p>
@@ -287,12 +224,6 @@ const md = new MarkdownIt({
   typographer: true
 }).use(markdownItSup)
 
-// Custom renderer for references
-md.renderer.rules.reference = (tokens, idx) => {
-  const token = tokens[idx]
-  return `<sup class="reference">[${token.meta.id}]</sup>`
-}
-
 const props = defineProps({
   messages: {
     type: Array,
@@ -312,35 +243,53 @@ const props = defineProps({
   },
   processingState: {
     type: String,
-    default: 'web-search'
+    default: 'general'
   }
 })
 
 const emit = defineEmits(['copy-success', 'copy-error', 'submit'])
 const messagesContainer = ref(null)
-const sourcesExpanded = ref({
-  web: false,
-  image: false,
-  vector: false
-})
-
-// Cache for processed content
+const expandedSourceTypes = ref(new Map())
 const contentCache = new Map()
+const dateFormatCache = new Map()
 
-// Computed property for visible messages with virtual scrolling
-const visibleMessages = computed(() => {
-  // For simplicity, we're showing all messages
-  // In a real implementation, you'd calculate which messages are in the viewport
+// Use a computed property for messages to optimize rendering
+const optimizedMessages = computed(() => {
   return props.messages
 })
 
-// Format date helper - memoized
-const dateFormatCache = new Map()
+// Better date formatting with caching
 const formatDate = (date) => {
   if (dateFormatCache.has(date)) {
     return dateFormatCache.get(date)
   }
-  const formatted = new Date(date).toLocaleString()
+  
+  const d = new Date(date)
+  const now = new Date()
+  const diff = now - d
+  
+  let formatted
+  
+  // If less than 24 hours, show relative time
+  if (diff < 24 * 60 * 60 * 1000) {
+    if (diff < 60 * 1000) {
+      formatted = 'Just now'
+    } else if (diff < 60 * 60 * 1000) {
+      const minutes = Math.floor(diff / (60 * 1000))
+      formatted = `${minutes} min ago`
+    } else {
+      const hours = Math.floor(diff / (60 * 60 * 1000))
+      formatted = `${hours} hr ago`
+    }
+  } else {
+    formatted = d.toLocaleString(undefined, { 
+      month: 'short', 
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+  
   dateFormatCache.set(date, formatted)
   return formatted
 }
@@ -359,7 +308,29 @@ const extractCode = (content) => {
     .join('\n\n')
 }
 
-// Check if content has sources without extracting them
+// Check for any sources
+const hasAnySources = (content) => {
+  return hasSources(content, 'web') || 
+         hasSources(content, 'image') || 
+         hasSources(content, 'vector')
+}
+
+// Count total sources
+const countAllSources = (content) => {
+  let count = 0
+  if (hasSources(content, 'web')) {
+    count += getSourcesIfExpanded(content, 'web').length
+  }
+  if (hasSources(content, 'image')) {
+    count += getSourcesIfExpanded(content, 'image').length
+  }
+  if (hasSources(content, 'vector')) {
+    count += getSourcesIfExpanded(content, 'vector').length
+  }
+  return count
+}
+
+// Check if content has sources
 const hasSources = (content, type) => {
   const regex = {
     web: /<websources>([^]*?)<\/websources>/s,
@@ -369,10 +340,8 @@ const hasSources = (content, type) => {
   return regex[type].test(content)
 }
 
-// Extract sources only if the section is expanded
+// Get sources if expanded
 const getSourcesIfExpanded = (content, type) => {
-  if (!sourcesExpanded.value[type]) return []
-  
   const regex = {
     web: /<websources>([^]*?)<\/websources>/s,
     image: /<imagesources>([^]*?)<\/imagesources>/s,
@@ -383,9 +352,35 @@ const getSourcesIfExpanded = (content, type) => {
   return match[1].trim().split('\n').filter(line => line.trim())
 }
 
-// Toggle source expansion with optimized rendering
-const toggleSourceExpansion = (type) => {
-  sourcesExpanded.value[type] = !sourcesExpanded.value[type]
+// Count sources by type
+const countSources = (content, type) => {
+  return getSourcesIfExpanded(content, type).length
+}
+
+// Toggle source type expansion for a message
+const toggleSourceType = (messageId, sourceType) => {
+  const key = `${messageId}-${sourceType}`
+  
+  if (!expandedSourceTypes.value.has(key)) {
+    expandedSourceTypes.value.set(key, true)
+  } else {
+    expandedSourceTypes.value.delete(key)
+  }
+}
+
+// Check if source type is expanded
+const isSourceTypeExpanded = (messageId, sourceType) => {
+  const key = `${messageId}-${sourceType}`
+  return expandedSourceTypes.value.has(key)
+}
+
+// Check if string is a valid URL
+const isValidUrl = (string) => {
+  try {
+    return Boolean(string.match(/(https?:\/\/[^\s]+)/))
+  } catch (e) {
+    return false
+  }
 }
 
 // Extract URL from source string
@@ -394,25 +389,20 @@ const extractUrl = (source) => {
   return match ? match[1] : ''
 }
 
-// Extract title from source string
-const extractTitle = (source) => {
+// Format source for display
+const formatSource = (source) => {
   // Remove any leading [IX] index
   const withoutIndex = source.replace(/^\[[^\]]+\]\s*/, '')
   // Get the text before the URL
   const url = extractUrl(source)
-  const titlePart = withoutIndex.split(url)[0].replace(/-\s*$/, '').trim()
-  // Limit to 30 characters
-  return titlePart.length > 30 ? titlePart.substring(0, 30) + '...' : titlePart
-}
-
-// Format source display
-const formatSource = (source) => {
-  const title = extractTitle(source)
-  const url = extractUrl(source)
+  let title = withoutIndex
+  if (url) {
+    title = withoutIndex.split(url)[0].trim()
+  }
   return { title, url }
 }
 
-// Process content with markdown - memoized for performance
+// Process content with optimized markdown rendering
 const getProcessedContent = (message) => {
   const cacheKey = message.id + '-' + message.content
   
@@ -426,11 +416,8 @@ const getProcessedContent = (message) => {
     .replace(/<imagesources>[^]*?<\/imagesources>/s, '')
     .replace(/<vectorsources>[^]*?<\/vectorsources>/s, '')
     
-  // Convert references [n] to superscript
-  const processedContent = cleanContent.replace(/\[(\d+)\]/g, '<sup class="reference">[$1]</sup>')
-  
   // Render markdown
-  const rendered = DOMPurify.sanitize(md.render(processedContent))
+  const rendered = DOMPurify.sanitize(md.render(cleanContent))
   
   // Cache the result
   contentCache.set(cacheKey, rendered)
@@ -449,84 +436,21 @@ const copyToClipboard = async (text) => {
   }
 }
 
-// Scroll to bottom of messages with improved performance
+// Optimized scroll to bottom
 const scrollToBottom = () => {
   if (!messagesContainer.value) return
   
-  // Use requestAnimationFrame for smoother scrolling
-  requestAnimationFrame(() => {
+  // Use a debounced/throttled scroll
+  if (window.requestAnimationFrame) {
+    window.requestAnimationFrame(() => {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    })
+  } else {
     messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-  })
+  }
 }
 
-// Watch for new messages and scroll to bottom
-watch(() => props.messages, () => {
-  // Clear cache when messages change
-  contentCache.clear()
-  
-  // Scroll after a short delay to ensure rendering is complete
-  nextTick(() => {
-    scrollToBottom()
-  })
-}, { deep: true })
-
-// Watch for thread changes
-watch(() => props.selectedThread, () => {
-  // Clear cache when thread changes
-  contentCache.clear()
-  dateFormatCache.clear()
-  
-  // Reset expanded sources
-  sourcesExpanded.value = {
-    web: false,
-    image: false,
-    vector: false
-  }
-  
-  nextTick(() => {
-    scrollToBottom()
-  })
-})
-
-onMounted(() => {
-  scrollToBottom()
-})
-
-// Example suggestions
-const suggestions = [
-  {
-    emoji: '🌡️',
-    title: 'Climate Science',
-    question: 'What are the main causes of global warming and their relative impact on climate change?'
-  },
-  {
-    emoji: '🌿',
-    title: 'Sustainable Solutions',
-    question: 'What are the most effective ways for individuals to reduce their carbon footprint?'
-  },
-  {
-    emoji: '🏭',
-    title: 'Industry Impact',
-    question: 'Which industries contribute the most to greenhouse gas emissions and what solutions exist?'
-  },
-  {
-    emoji: '🌊',
-    title: 'Ocean Impact',
-    question: 'How does climate change affect ocean ecosystems and what are the consequences?'
-  },
-  {
-    emoji: '🔋',
-    title: 'Clean Energy',
-    question: 'What are the most promising renewable energy technologies for combating climate change?'
-  },
-  {
-    emoji: '🌳',
-    title: 'Forest Conservation',
-    question: 'How do deforestation and forest conservation impact climate change?'
-  }
-]
-
-// Handle suggestion click
+// Handle suggestion clicks
 const handleSuggestionClick = (suggestion) => {
   emit('submit', {
     message: suggestion.question,
@@ -534,16 +458,68 @@ const handleSuggestionClick = (suggestion) => {
     mode: 'general'
   })
 }
+
+// Example suggestions (simplified)
+const suggestions = [
+  {
+    emoji: '🌡️',
+    title: 'Climate Science',
+    question: 'What are the main causes of global warming?'
+  },
+  {
+    emoji: '🌿',
+    title: 'Sustainable Solutions',
+    question: 'How can I reduce my carbon footprint?'
+  },
+  {
+    emoji: '🏭',
+    title: 'Industry Impact',
+    question: 'Which industries contribute most to emissions?'
+  },
+  {
+    emoji: '🌊',
+    title: 'Ocean Impact',
+    question: 'How does climate change affect oceans?'
+  },
+  {
+    emoji: '🔋',
+    title: 'Clean Energy',
+    question: 'What are the best renewable energy technologies?'
+  },
+  {
+    emoji: '🌳',
+    title: 'Forest Conservation',
+    question: 'How does deforestation impact climate change?'
+  }
+]
+
+// Clear caches when thread changes
+watch(() => props.selectedThread, () => {
+  contentCache.clear()
+  dateFormatCache.clear()
+  expandedSourceTypes.value.clear()
+  
+  nextTick(scrollToBottom)
+})
+
+// Watch for new messages and scroll to bottom
+watch(() => props.messages.length, () => {
+  nextTick(scrollToBottom)
+})
+
+onMounted(() => {
+  scrollToBottom()
+})
 </script>
 
 <style>
-/* Markdown content styles */
+/* Refined styling for markdown content */
 .prose {
   @apply text-gray-700;
 }
 
 .prose pre {
-  @apply bg-gray-50 rounded-lg p-4 my-2 overflow-x-auto border border-gray-100;
+  @apply bg-gray-50 rounded-lg p-3 my-2 overflow-x-auto border border-gray-100;
 }
 
 .prose code {
@@ -554,135 +530,66 @@ const handleSuggestionClick = (suggestion) => {
   @apply bg-transparent p-0;
 }
 
-
-.prose ul{
-  @apply list-disc list-inside my-2;
+.prose ul {
+  @apply list-disc my-2 pl-5;
 }
 
 .prose ol {
-  @apply list-decimal list-inside my-2;
+  @apply list-decimal my-2 pl-5;
 }
 
 .prose h1, .prose h2, .prose h3, .prose h4 {
-  @apply font-semibold my-3 text-gray-800;
+  @apply font-semibold my-2 text-gray-800;
 }
 
 .prose h1 {
-  @apply text-2xl;
+  @apply text-xl;
 }
 
 .prose h2 {
-  @apply text-xl;
+  @apply text-lg;
 }
     
 .prose h3 {
-  @apply text-lg;
+  @apply text-base;
 }
 
 .prose a {
-  @apply text-blue-600 hover:text-blue-800;
+  @apply text-blue-600 hover:underline;
 }
 
 .prose blockquote {
-  @apply border-l-4 border-gray-200 pl-4 italic;
-}
-
-.prose hr {
-  @apply my-4 border-gray-200;
-}
-
-/* Reference styling */
-.reference {
-  @apply text-xs text-teal-600 font-medium ml-0.5 bg-teal-50 px-1 py-0.5 rounded;
-}
-
-/* Sources sections styling */
-.sources-section {
-  @apply mt-4 border rounded-lg overflow-hidden;
-}
-
-.sources-header {
-  @apply px-4 py-2 bg-gray-50 font-medium text-sm flex justify-between items-center cursor-pointer hover:bg-gray-100;
-}
-
-.sources-content {
-  @apply px-4 py-2 text-sm space-y-1;
-}
-
-/* Raw message content styles */
-pre {
-  @apply whitespace-pre-wrap font-sans text-sm;
-  @apply bg-transparent border-0 p-0 m-0;
-  @apply overflow-x-auto;
-}
-
-pre.text-teal-900 {
-  @apply font-medium;
-}
-
-/* References section styling */
-h2:contains("References"), h2:contains("References") + p {
-  @apply border-t border-gray-100 pt-4 mt-6;
-}
-
-h2:contains("References") {
-  @apply text-lg font-medium text-gray-700;
-}
-
-h2:contains("References") + p, 
-h2:contains("References") ~ p {
-  @apply text-sm text-gray-600 my-1 break-words leading-relaxed;
-}
-
-h2:contains("References") ~ p a {
-  @apply text-teal-600 hover:text-teal-700 break-all text-xs;
-  word-break: break-all;
-}
-
-/* Inline citation styling */
-span.inline-block {
-  @apply text-xs text-teal-600 font-medium ml-0.5 bg-teal-50 px-1 py-0.5 rounded;
-}
-
-/* Ensure proper link wrapping */
-a {
-  @apply inline-block max-w-full overflow-hidden text-ellipsis;
-}
-
-/* Source list items */
-.sources-content li {
-  @apply py-1 break-all;
-}
-img{
-  margin-top: 20px;
-  border-radius: 10px;
-}
-
-/* Transition animations */
-.message-fade-enter-active,
-.message-fade-leave-active {
-  transition: all 0.3s ease;
-}
-
-.message-fade-enter-from,
-.message-fade-leave-to {
-  opacity: 0;
-  transform: translateY(10px);
-}
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+  @apply border-l-4 border-gray-200 pl-4 italic my-2;
 }
 
 /* Hardware acceleration for smoother animations */
-.message-fade-item {
-  will-change: transform, opacity;
-  backface-visibility: hidden;
+.messagesContainer {
+  -webkit-overflow-scrolling: touch;
+  will-change: transform;
+}
+
+/* Optimize images */
+img {
+  @apply rounded-lg my-2;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Simplify animations */
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.animate-pulse {
+  animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.delay-75 {
+  animation-delay: 0.15s;
+}
+
+.delay-150 {
+  animation-delay: 0.3s;
 }
 </style>

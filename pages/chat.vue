@@ -1,12 +1,20 @@
 <template>
-  <div v-if="isInitializing" class="h-screen flex items-center justify-center bg-gray-100">
+  <!-- Loading State -->
+  <div v-if="isInitializing" class="h-screen flex items-center justify-center bg-gray-50">
     <div class="text-center">
-      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto"></div>
-      <p class="mt-4 text-gray-600">Loading...</p>
+      <div class="animate-pulse mb-4">
+        <div class="inline-block w-10 h-10 rounded-full bg-teal-100">
+          <svg class="w-6 h-6 text-teal-600 mx-auto mt-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+          </svg>
+        </div>
+      </div>
+      <p class="text-gray-600 text-sm">Loading your workspace...</p>
     </div>
   </div>
   
-  <div v-else class="h-screen flex overflow-hidden bg-gray-100">
+  <!-- Main Chat Interface -->
+  <div v-else class="h-screen flex overflow-hidden bg-gray-50">
     <!-- Thread Sidebar -->
     <ThreadSidebar
       :threads="threads"
@@ -26,7 +34,6 @@
         :thread="selectedThread"
         @clear="clearThread"
         @update-thread="updateThreadTitle"
-        @pdf-upload="handlePdfUpload"
       />
 
       <!-- Messages Area -->
@@ -37,81 +44,86 @@
         :is-loading="isLoading"
         :processing-time="processingTime"
         :processing-state="processingState"
-        @copy-success="toast?.addToast('Copied to clipboard!', 'success', 2000)"
-        @copy-error="toast?.addToast('Failed to copy text', 'error', 2000)"
+        @copy-success="showToast('Copied to clipboard!', 'success')"
+        @copy-error="showToast('Failed to copy text', 'error')"
         @submit="handleSubmit"
       />
 
       <!-- Input Area -->
       <ChatInput
-        :disabled="!selectedThread"
+        :disabled="!selectedThread || isLoading"
         :is-loading="isLoading"
         @submit="handleSubmit"
       />
-      
-      <Toast ref="toast" />
+    </div>
+    
+    <!-- Toast Notifications -->
+    <div class="fixed bottom-4 right-4 z-50">
+      <div 
+        v-for="(toast, index) in toasts" 
+        :key="toast.id"
+        class="mb-2 px-4 py-2 rounded-lg shadow-lg text-sm transition-all transform translate-y-0 opacity-100"
+        :class="[
+          toast.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : 
+          toast.type === 'error' ? 'bg-red-50 text-red-800 border border-red-200' : 
+          'bg-blue-50 text-blue-800 border border-blue-200'
+        ]"
+      >
+        {{ toast.message }}
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch, onBeforeUnmount, computed, nextTick } from 'vue'
+import { ref, onMounted, watch, onBeforeUnmount, nextTick } from 'vue'
 import { useAuth } from '~/composables/useAuth'
-import Toast from '~/components/Toast.vue'
 import ThreadSidebar from '~/components/chat/ThreadSidebar.vue'
 import ChatHeader from '~/components/chat/ChatHeader.vue'
 import ChatMessages from '~/components/chat/ChatMessages.vue'
 import ChatInput from '~/components/chat/ChatInput.vue'
 
+// Auth middleware
 definePageMeta({
   middleware: 'auth'
 })
 
+// Initialize auth
 const { user, clearAuth, fetchUser } = useAuth()
+const router = useRouter()
+
+// App state
 const isInitializing = ref(true)
-const toast = ref(null)
 const messagesContainer = ref(null)
-const isThreadSwitching = ref(false)
-
-// Scroll to bottom of messages with improved performance
-const scrollToBottom = () => {
-  if (!messagesContainer.value) return
-  
-  // Use requestAnimationFrame for smoother scrolling
-  requestAnimationFrame(() => {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-  })
-}
-
-// Watch for user changes
-watch(user, (newUser) => {
-  if (!newUser) {
-    router.push('/login')
-  }
-})
-
 const threads = ref([])
 const selectedThread = ref(null)
 const messages = ref([])
 const isLoading = ref(false)
-const pdfContext = ref(null)
-
-// Processing state management
-const processingState = ref('web-search') // 'web-search', 'vector-search', 'ai-processing'
-
-// Stopwatch state
+const processingState = ref('general') 
 const processingTime = ref(0)
 const processingTimer = ref(null)
 
-// Start the stopwatch
+// Toast notifications system
+const toasts = ref([])
+const showToast = (message, type = 'info', duration = 3000) => {
+  const id = Date.now()
+  toasts.value.push({ id, message, type })
+  
+  setTimeout(() => {
+    toasts.value = toasts.value.filter(t => t.id !== id)
+  }, duration)
+}
+
+// Stopwatch functions
 const startStopwatch = () => {
   const startTime = Date.now()
+  stopStopwatch() // Clear any existing timer
+  
   processingTimer.value = setInterval(() => {
     processingTime.value = Math.floor((Date.now() - startTime) / 1000)
   }, 1000)
 }
 
-// Stop the stopwatch
 const stopStopwatch = () => {
   if (processingTimer.value) {
     clearInterval(processingTimer.value)
@@ -120,146 +132,269 @@ const stopStopwatch = () => {
   processingTime.value = 0
 }
 
-// Fetch user's threads with optimized loading
+// Fetch user's threads
 const fetchThreads = async () => {
   try {
     const response = await $fetch('/api/threads', {
       credentials: 'include'
     })
     threads.value = response.threads
+    
+    // Select first thread if available and none is selected
+    if (threads.value.length > 0 && !selectedThread.value) {
+      await selectThread(threads.value[0])
+    }
   } catch (error) {
     console.error('Error fetching threads:', error)
-    toast.value?.addToast('Failed to load threads', 'error', 3000)
+    showToast('Could not load your conversations', 'error')
   }
 }
 
-// Fetch messages for selected thread with optimized loading
+// Fetch messages for selected thread
 const fetchMessages = async (threadId) => {
   try {
-    isThreadSwitching.value = true
     const response = await $fetch(`/api/threads/${threadId}/messages`, {
       credentials: 'include'
     })
     
-    // Use nextTick to ensure DOM updates are batched
-    await nextTick(() => {
-      messages.value = response.messages
-    })
+    messages.value = response.messages
     
-    // Delay scrolling slightly to ensure content is rendered
-    setTimeout(scrollToBottom, 50)
+    // Ensure message container scrolls to bottom
+    nextTick(() => {
+      if (messagesContainer.value) {
+        messagesContainer.value.scrollToBottom()
+      }
+    })
   } catch (error) {
     console.error('Error fetching messages:', error)
-    toast.value?.addToast('Failed to load messages', 'error', 3000)
-  } finally {
-    isThreadSwitching.value = false
+    showToast('Could not load messages', 'error')
   }
 }
 
-// Create a new thread with optimized UI feedback
+// Create a new thread
 const createNewThread = async () => {
   try {
-    const title = `New Chat ${new Date().toLocaleString()}`
+    const tempId = `temp-${Date.now()}`
+    const title = `New Chat ${new Date().toLocaleTimeString()}`
+    
+    // Optimistically add the thread to the list
+    const tempThread = {
+      id: tempId,
+      title,
+      createdAt: new Date().toISOString(),
+      isTemp: true
+    }
+    
+    threads.value = [tempThread, ...threads.value]
+    
+    // Optimistically select the thread
+    selectedThread.value = tempThread
+    messages.value = [] // Clear messages immediately
+    
+    // Then perform the actual API call
     const response = await $fetch('/api/threads', {
       method: 'POST',
       body: { title },
       credentials: 'include'
     })
     
-    // Add to beginning of array with animation preparation
-    threads.value = [response.thread, ...threads.value]
+    // Replace the temporary thread with the real one
+    const index = threads.value.findIndex(t => t.id === tempId)
+    if (index !== -1) {
+      threads.value[index] = response.thread
+      
+      // Update selected thread if needed
+      if (selectedThread.value.id === tempId) {
+        selectedThread.value = response.thread
+      }
+    }
     
-    // Select the thread after a short delay to allow for animation
-    setTimeout(() => {
-      selectThread(response.thread)
-    }, 50)
+    showToast('New conversation created', 'success')
   } catch (error) {
     console.error('Error creating thread:', error)
-    toast.value?.addToast('Failed to create new thread', 'error', 3000)
+    
+    // Remove the temporary thread
+    threads.value = threads.value.filter(t => !t.isTemp)
+    
+    // Reset selected thread if needed
+    if (selectedThread.value?.isTemp) {
+      selectedThread.value = threads.value.length > 0 ? threads.value[0] : null
+    }
+    
+    showToast('Failed to create new conversation', 'error')
   }
 }
 
-// Select a thread with improved state management
+// Select a thread
 const selectThread = async (thread) => {
   if (selectedThread.value?.id === thread.id) return
   
+  // Store previous thread for fallback
+  const previousThread = selectedThread.value
+  
+  // Update UI immediately
   selectedThread.value = thread
-  messages.value = [] // Clear messages immediately for better UX
-  await fetchMessages(thread.id)
-}
-
-// Clear thread messages
-const clearThread = async () => {
-  if (!selectedThread.value) return
-  if (!confirm('Are you sure you want to clear all messages in this thread?')) return
+  messages.value = [] // Clear messages for instant feedback
   
   try {
-    await $fetch(`/api/threads/${selectedThread.value.id}/messages`, {
-      method: 'DELETE',
+    // Add a subtle loading indicator on the thread item
+    thread.isLoading = true
+    
+    // Then fetch the actual messages
+    const response = await $fetch(`/api/threads/${thread.id}/messages`, {
       credentials: 'include'
     })
-    messages.value = []
+    
+    messages.value = response.messages
+    
+    // Remove loading state
+    thread.isLoading = false
+    
+    // Ensure message container scrolls to bottom
+    nextTick(() => {
+      if (messagesContainer.value) {
+        messagesContainer.value.scrollToBottom()
+      }
+    })
   } catch (error) {
-    console.error('Error clearing thread:', error)
+    console.error('Error fetching messages:', error)
+    
+    // Revert to previous thread if there was an error
+    if (previousThread) {
+      selectedThread.value = previousThread
+      await fetchMessages(previousThread.id).catch(() => {}) // Silent fallback
+    }
+    
+    showToast('Could not load messages', 'error')
+    
+    // Remove loading state
+    thread.isLoading = false
   }
 }
 
 // Delete thread
 const deleteThread = async (thread) => {
-  if (!confirm('Are you sure you want to delete this thread?')) return
-  
   try {
+    // Store thread for potential restoration
+    const threadToDelete = { ...thread }
+    const threadIndex = threads.value.indexOf(thread)
+    
+    // Optimistically remove from list
+    threads.value = threads.value.filter(t => t.id !== thread.id)
+    
+    // Handle if current thread was deleted
+    if (selectedThread.value?.id === thread.id) {
+      selectedThread.value = threads.value.length > 0 ? threads.value[0] : null
+      messages.value = []
+      
+      // Load messages if we auto-selected another thread
+      if (selectedThread.value) {
+        fetchMessages(selectedThread.value.id).catch(() => {}) // Silent fallback
+      }
+    }
+    
+    // Then perform the actual delete
     await $fetch(`/api/threads/${thread.id}`, {
       method: 'DELETE',
       credentials: 'include'
     })
-    threads.value = threads.value.filter(t => t.id !== thread.id)
-    if (selectedThread.value?.id === thread.id) {
-      selectedThread.value = null
-      messages.value = []
-    }
+    
+    showToast('Conversation deleted', 'success')
   } catch (error) {
     console.error('Error deleting thread:', error)
+    
+    // Restore the thread if deletion failed
+    if (threadToDelete) {
+      if (threadIndex >= 0) {
+        threads.value.splice(threadIndex, 0, threadToDelete)
+      } else {
+        threads.value.push(threadToDelete)
+      }
+    }
+    
+    showToast('Failed to delete conversation', 'error')
   }
 }
 
 // Update thread title
 const updateThreadTitle = async ({ id, title }) => {
+  // Find thread in list
+  const thread = threads.value.find(t => t.id === id)
+  if (!thread) return
+  
+  // Store original title for rollback
+  const originalTitle = thread.title
+  
   try {
+    // Update UI immediately
+    thread.title = title
+    
+    // If it's the selected thread, update that too
+    if (selectedThread.value?.id === id) {
+      selectedThread.value = { ...selectedThread.value, title }
+    }
+    
+    // Then perform the actual update
     const response = await $fetch(`/api/threads/${id}`, {
       method: 'PUT',
       body: { title },
       credentials: 'include'
     })
-
-    // Update the thread in the list
+    
+    // Update with server response (ensures consistency)
     const index = threads.value.findIndex(t => t.id === id)
     if (index !== -1) {
       threads.value[index] = response.thread
+      
+      // Update selected thread if needed
       if (selectedThread.value?.id === response.thread.id) {
         selectedThread.value = response.thread
       }
     }
+    
+    showToast('Title updated', 'success')
   } catch (error) {
     console.error('Error updating thread title:', error)
+    
+    // Rollback to original title if update failed
+    if (thread) {
+      thread.title = originalTitle
+      
+      // Rollback selected thread too if needed
+      if (selectedThread.value?.id === id) {
+        selectedThread.value = { ...selectedThread.value, title: originalTitle }
+      }
+    }
+    
+    showToast('Failed to update title', 'error')
   }
 }
 
-// Handle PDF upload
-const handlePdfUpload = async (formData) => {
+// Clear thread messages
+const clearThread = async () => {
+  if (!selectedThread.value) return
+  
+  // Store messages for potential restoration
+  const originalMessages = [...messages.value]
+  
   try {
-    const reader = new FileReader()
-    const file = formData.get('pdf')
+    // Update UI immediately
+    messages.value = []
     
-    reader.onload = async (e) => {
-      pdfContext.value = e.target.result
-      toast.value?.addToast('PDF loaded successfully', 'success', 2000)
-    }
+    // Then perform the actual clear
+    await $fetch(`/api/threads/${selectedThread.value.id}/messages`, {
+      method: 'DELETE',
+      credentials: 'include'
+    })
     
-    reader.readAsArrayBuffer(file)
+    showToast('Conversation cleared', 'success')
   } catch (error) {
-    console.error('Error processing PDF:', error)
-    toast.value?.addToast('Failed to process PDF', 'error', 3000)
+    console.error('Error clearing thread:', error)
+    
+    // Restore messages if clearing failed
+    messages.value = originalMessages
+    
+    showToast('Failed to clear conversation', 'error')
   }
 }
 
@@ -269,10 +404,10 @@ const handleSubmit = async (messageData) => {
   
   isLoading.value = true
   startStopwatch()
-  processingState.value = 'initializing'
+  processingState.value = messageData.mode || 'general'
 
   try {
-    // Add temporary message
+    // Add temporary user message
     const tempMessageId = Date.now()
     messages.value.push({
       id: tempMessageId,
@@ -282,6 +417,13 @@ const handleSubmit = async (messageData) => {
       isTemp: true
     })
 
+    // Scroll to bottom
+    nextTick(() => {
+      if (messagesContainer.value) {
+        messagesContainer.value.scrollToBottom()
+      }
+    })
+
     // Send message to API
     const response = await $fetch('/api/chat', {
       method: 'POST',
@@ -289,77 +431,93 @@ const handleSubmit = async (messageData) => {
         threadId: selectedThread.value.id,
         message: messageData.message,
         pdfContext: messageData.pdfContext,
-        mode: messageData.mode
+        mode: messageData.mode || 'general'
       }
     })
 
-    // Update processing state from backend
-    processingState.value = response.processingState
+    // Update processing state from response
+    processingState.value = response.processingState || 'general'
 
-    // Remove temp message and add both messages from response
+    // Remove temp message and add actual messages from response
     messages.value = messages.value.filter(m => !m.isTemp)
+    messages.value.push(...response.messages)
     
-    // Add messages with processing state
-    response.messages.forEach(msg => {
-      if (msg.role === 'assistant') {
-        msg.isProcessing = true
+    // Scroll to bottom after message received
+    nextTick(() => {
+      if (messagesContainer.value) {
+        messagesContainer.value.scrollToBottom()
       }
-      messages.value.push(msg)
     })
-
-    // Simulate final processing (500ms)
-    await new Promise(resolve => setTimeout(resolve, 500))
-
-    // Update messages to remove processing state
-    messages.value = messages.value.map(msg => ({
-      ...msg,
-      isProcessing: false
-    }))
-    
-    scrollToBottom()
   } catch (error) {
     console.error('Error sending message:', error)
     messages.value = messages.value.filter(m => !m.isTemp)
-    toast.value?.addToast(error?.data?.error || 'Failed to send message', 'error', 3000)
+    
+    let errorMessage = 'Failed to send message'
+    if (error?.data?.error) {
+      errorMessage = error.data.error
+    }
+    
+    showToast(errorMessage, 'error')
   } finally {
     isLoading.value = false
     stopStopwatch()
   }
 }
 
-// Handle logout
+// Handle user logout
 const handleLogout = async () => {
-  if (confirm('Are you sure you want to logout?')) {
+  try {
     await clearAuth()
+    router.push('/login')
+  } catch (error) {
+    console.error('Error logging out:', error)
+    showToast('Failed to log out', 'error')
   }
 }
 
-// Watch for thread changes with debounce
-watch(() => selectedThread.value, async (newThread, oldThread) => {
-  if (!newThread) {
-    messages.value = []
-    return
+// Watch for auth changes
+watch(user, (newUser) => {
+  if (!newUser) {
+    router.push('/login')
   }
+})
 
-  if (newThread?.id !== oldThread?.id) {
-    pdfContext.value = null
-  }
-}, { deep: true })
-
-// Initial load with improved sequence
+// Load data on mount
 onMounted(async () => {
   try {
     await fetchUser()
     await fetchThreads()
-    isInitializing.value = false
   } catch (error) {
-    console.error('Error initializing:', error)
+    console.error('Error initializing chat:', error)
+    showToast('Failed to load your data', 'error')
+  } finally {
     isInitializing.value = false
   }
 })
 
-// Cleanup on unmount
+// Clean up on unmount
 onBeforeUnmount(() => {
   stopStopwatch()
 })
-</script> 
+</script>
+
+<style scoped>
+/* Toast animations */
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.toast-enter-active {
+  animation: slideUp 0.3s ease-out;
+}
+
+.toast-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+</style> 

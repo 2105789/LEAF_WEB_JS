@@ -34,6 +34,9 @@ let tavilyClient = null
 // In-memory cache for active conversations
 const conversationCache = new Map()
 
+// In-memory cache for vector search results by threadId
+const vectorResultsCache = new Map()
+
 // Qdrant client configuration
 const QDRANT_URL = "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io:6333"
 const QDRANT_API_KEY = "Nygu4XKFKDhPxO47WOuaY_g2YsX3XTFacn39AvxaeOwtZ2Qnjbh46A"
@@ -100,8 +103,8 @@ async function searchQdrant(query, sourceFilter = null, limit = 5) {
       allDocuments = [...allDocuments, ...scrollResult.points];
       
       // Limit to 1000 documents max to avoid excessive processing
-      if (allDocuments.length > 1000) {
-        console.log("[QDRANT] Reached maximum document limit (1000) for text search");
+      if (allDocuments.length > 8000) {
+        console.log("[QDRANT] Reached maximum document limit (8000) for text search");
         break;
       }
     }
@@ -174,37 +177,17 @@ async function getConversationContext(threadId, prisma, limit = 5) {
 
 // Function to determine optimal search parameters based on query
 async function determineSearchParameters(query, geminiApiKey) {
-  const paramModel = new ChatGoogleGenerativeAI({
-    apiKey: geminiApiKey,
-    model: "gemini-2.0-flash-lite",
-    temperature: 0,
-    maxRetries: 2,
-  })
-
-  const paramPrompt = `
-Analyze this climate-related query: "${query}"
-
-Based on this query, determine these search parameters:
-1. searchDepth: "basic" for simple queries, "advanced" for complex research questions
-2. timeRange: "day", "week", "month", "year" based on information recency needs
-3. includeImages: boolean depending on if visual representation would be helpful
-4. maxResults: integer between 3 and 15 based on query complexity (more complex = more results)
-
-Return ONLY a valid JSON object without any markdown formatting, code blocks, or explanations:
-{"searchDepth":"advanced","timeRange":"year","includeImages":true,"maxResults":10}`
-
-  try {
-    console.log("[SEARCH_PARAMS] Determining search parameters for query:", query.substring(0, 50) + "...")
-    const paramResponse = await paramModel.invoke([["human", paramPrompt]])
-    let responseContent = paramResponse.content.trim().replace(/```json\s*/g, "").replace(/```\s*$/g, "")
-    console.log("[SEARCH_PARAMS] Generated search parameters:", responseContent)
-    return JSON.parse(responseContent)
-  } catch (error) {
-    console.error("[SEARCH_PARAMS] Error determining search parameters:", error.message)
-    console.error("[SEARCH_PARAMS] Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)))
-    console.error("[SEARCH_PARAMS] Full error stack:", error.stack)
-    return { searchDepth: "advanced", timeRange: "year", includeImages: true, maxResults: 10 }
-  }
+  // Use the same default parameters for all queries
+  const defaultParams = {
+    searchDepth: "advanced",
+    includeAnswer: "advanced",
+    includeImages: true,
+    includeImageDescriptions: true,
+    includeRawContent: true
+  };
+  
+  console.log("[SEARCH_PARAMS] Using fixed default parameters for all queries:", JSON.stringify(defaultParams, null, 2));
+  return defaultParams;
 }
 
 // Helper function to initialize Tavily
@@ -236,9 +219,9 @@ async function isClimateRelated(query, geminiApiKey) {
 
   const topicPrompt = `
 Analyze this query and determine if it falls into one of these categories:
-1. CLIMATE: Directly related to climate change, environmental sustainability, or related domains
+1. CLIMATE: Related to climate change, environmental sustainability, climate-related organizations, energy, emissions, biodiversity, conservation, pollution, natural resources, climate policy, sustainable development, or environmental technologies. This includes organizations like UNFCCC, IPCC, APCTT, or any entity working on climate/environmental issues.
 2. CONVERSATION: Basic conversation, context questions, or task-related queries (like summarizing PDFs, asking about previous discussions)
-3. OTHER: Completely unrelated topics
+3. OTHER: Completely unrelated topics like fictional entertainment, sports, or personal relationships that have no connection to climate or environment.
 
 Query: "${query}"
 
@@ -272,9 +255,13 @@ async function routeQuery(query, geminiApiKey) {
 
   const routerPrompt = `
 Classify the following user query into EXACTLY ONE of these categories:
-1. CASUAL_CONVERSATION: Simple greetings, chitchat, or personal exchanges unrelated to climate
-2. RESEARCH_QUESTION: Questions that require factual information, data, studies, or citations, latest recent data, sources, images, urls.
-3. GENERAL_QUESTION: Other non-research climate questions that don't require citations
+1. CASUAL_CONVERSATION: Simple greetings, chitchat, or personal exchanges
+2. RESEARCH_QUESTION: Questions that require factual information, data, studies, citations, recent information, sources, or images. This includes questions about organizations, technologies, policies, events, or people related to climate/environment, even if they don't explicitly mention climate change.
+3. GENERAL_QUESTION: Other climate or environmental questions that don't require extensive citations or research
+
+Be inclusive in your classification - if the query mentions ANY organization, technology, or concept that could be connected to climate, sustainability, environment, or green initiatives, classify it as RESEARCH_QUESTION or GENERAL_QUESTION, not CASUAL_CONVERSATION.
+
+For example, questions about APCTT, sustainable technologies, green energy, pollution, conservation, biodiversity, or similar topics should be classified as RESEARCH_QUESTION or GENERAL_QUESTION, not CASUAL_CONVERSATION.
 
 Query: "${query}"
 
@@ -303,22 +290,142 @@ function extractSourcesFromTavily(searchResults) {
     return { webSources: [], imageSources: [] }
   }
 
-  const webSources = searchResults.results.map((result, index) => ({
+  // Helper function to extract date indicators from text
+  const extractDateIndicators = (text) => {
+    if (!text) return null;
+    
+    // Look for year-month patterns (2024-10, 2023-03, etc.)
+    const yearMonthPattern = /\b(20\d\d)[-\/](\d\d)\b/;
+    // Look for month-year patterns (April-June 2024, Jan 2023, etc.)
+    const monthYearPattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](\d{4})\b/i;
+    // Look for quarter patterns (Q1 2024, Q4 2023, etc.)
+    const quarterPattern = /\bQ[1-4][-\s](20\d\d)\b/i;
+    // Look for period patterns (April-June 2024, Jan-Mar 2023, etc.)
+    const periodPattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](to|through|thru|[-])[-\s]?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](20\d\d)\b/i;
+    
+    // Try to match each pattern
+    const yearMonthMatch = text.match(yearMonthPattern);
+    const monthYearMatch = text.match(monthYearPattern);
+    const quarterMatch = text.match(quarterPattern);
+    const periodMatch = text.match(periodPattern);
+    
+    // Return the first match found, with priority
+    if (yearMonthMatch) return { year: yearMonthMatch[1], month: yearMonthMatch[2], text: yearMonthMatch[0] };
+    if (monthYearMatch) return { year: monthYearMatch[2], month: monthYearMatch[1], text: monthYearMatch[0] };
+    if (quarterMatch) return { year: quarterMatch[1], quarter: true, text: quarterMatch[0] };
+    if (periodMatch) return { year: periodMatch[4], period: true, text: periodMatch[0] };
+    
+    // Look for just year as a fallback
+    const yearMatch = text.match(/\b(20\d\d)\b/);
+    if (yearMatch) return { year: yearMatch[1], text: yearMatch[0] };
+    
+    return null;
+  };
+  
+  // Score recency based on date indicators
+  const scoreRecency = (result) => {
+    // Check title, URL and content for date indicators
+    const titleDate = extractDateIndicators(result.title);
+    const urlDate = extractDateIndicators(result.url);
+    const contentDate = extractDateIndicators(result.content);
+    
+    //console.log(`[TAVILY] Recency scoring for result: "${result.title.substring(0, 30)}..."`);
+    //console.log(`[TAVILY] Date from title: ${titleDate ? JSON.stringify(titleDate) : 'None'}`);
+    //console.log(`[TAVILY] Date from URL: ${urlDate ? JSON.stringify(urlDate) : 'None'}`);
+    //console.log(`[TAVILY] Date from content: ${contentDate ? JSON.stringify(contentDate) : 'None'}`);
+    
+    // Use the most specific date found (prioritize content, then title, then URL)
+    const dateInfo = contentDate || titleDate || urlDate;
+    
+    if (!dateInfo) {
+      //console.log(`[TAVILY] No date information found, setting recency score to 0`);
+      return 0;
+    }
+    
+    // Calculate recency score - higher for more recent dates
+    const currentYear = new Date().getFullYear();
+    const yearDiff = currentYear - parseInt(dateInfo.year);
+    
+    // Base score on how recent the year is
+    let recencyScore = 100 - (yearDiff * 30); // Deduct 30 points per year older
+    
+    // If we have month info, refine the score further
+    if (dateInfo.month) {
+      const currentMonth = new Date().getMonth() + 1; // 1-12
+      
+      // Convert month name to number if necessary
+      let monthNum = dateInfo.month;
+      if (isNaN(monthNum)) {
+        const monthNames = {
+          "jan": 1, "january": 1,
+          "feb": 2, "february": 2,
+          "mar": 3, "march": 3,
+          "apr": 4, "april": 4,
+          "may": 5,
+          "jun": 6, "june": 6,
+          "jul": 7, "july": 7,
+          "aug": 8, "august": 8,
+          "sep": 9, "september": 9,
+          "oct": 10, "october": 10,
+          "nov": 11, "november": 11,
+          "dec": 12, "december": 12
+        };
+        monthNum = monthNames[dateInfo.month.toLowerCase()] || 1;
+      }
+      
+      // If same year, refine by month
+      if (yearDiff === 0) {
+        recencyScore = 100 - ((currentMonth - monthNum) * 2); // Deduct 2 points per month older
+      }
+    }
+    
+    // Cap score between 0 and 100
+    recencyScore = Math.max(0, Math.min(100, recencyScore));
+    console.log(`[TAVILY] Final recency score: ${recencyScore} for date: ${dateInfo.text}`);
+    
+    return recencyScore;
+  };
+
+  // Add recency score to results
+  const scoredResults = searchResults.results.map(result => ({
+    ...result,
+    recencyScore: scoreRecency(result)
+  }));
+  
+  // Sort by recency score (higher first) then by original score
+  const sortedResults = scoredResults.sort((a, b) => {
+    // If recency scores differ significantly, prioritize recency
+    if (Math.abs(a.recencyScore - b.recencyScore) > 20) {
+      //console.log(`[TAVILY] Sorting by recency: "${a.title.substring(0, 30)}..." (${a.recencyScore}) vs "${b.title.substring(0, 30)}..." (${b.recencyScore})`);
+      return b.recencyScore - a.recencyScore;
+    }
+    // Otherwise, use original score
+    //console.log(`[TAVILY] Sorting by original score: "${a.title.substring(0, 30)}..." (${a.score}) vs "${b.title.substring(0, 30)}..." (${b.score})`);
+    return b.score - a.score;
+  });
+  
+ // console.log("[TAVILY] Results after sorting by recency and relevance:");
+  sortedResults.forEach((result, index) => {
+   // console.log(`[TAVILY] [${index+1}] Title: "${result.title.substring(0, 40)}..." | Recency: ${result.recencyScore} | Score: ${result.score}`);
+  });
+
+  const webSources = sortedResults.map((result, index) => ({
     index: index + 1,
     title: result.title || "Untitled Source",
     url: result.url || "",
     content: [result.rawContent, result.content, result.content_snippet]
-      .find(content => typeof content === 'string') || ""
-  }))
+      .find(content => typeof content === 'string') || "",
+    recencyScore: result.recencyScore
+  }));
 
   const imageSources = (searchResults.images || []).map((img, index) => ({
     index: index + 1,
     url: img.url || "",
     description: img.description || `Image related to query`,
     sourceUrl: img.source_url || ""
-  }))
+  }));
 
-  return { webSources, imageSources }
+  return { webSources, imageSources };
 }
 
 // Helper function to validate PDF data
@@ -363,6 +470,85 @@ function cleanMarkdownResponse(response) {
   return response.replace(/^```markdown\n/, '').replace(/\n```$/, '').trim()
 }
 
+// Helper function to ensure source blocks are properly formatted
+function ensureProperSourceBlocks(response, threadId) {
+  // First clean the response
+  let cleaned = cleanMarkdownResponse(response);
+  
+  // Check if source blocks are properly formatted
+  const hasWebsources = cleaned.includes('<websources>') && cleaned.includes('</websources>');
+  const hasImagesources = cleaned.includes('<imagesources>') && cleaned.includes('</imagesources>');
+  const hasVectorsources = cleaned.includes('<vectorsources>') && cleaned.includes('</vectorsources>');
+  
+  // If all source blocks are present and properly formatted, return as is
+  if (hasWebsources && hasImagesources && hasVectorsources) {
+    //console.log('[SOURCE_BLOCKS] Source blocks are properly formatted');
+    return cleaned;
+  }
+  
+  // Fix source blocks if they are improperly formatted
+  //console.log('[SOURCE_BLOCKS] Fixing source block formatting');
+  
+  // Extract the references section (everything after "## References" or similar)
+  const referencesSectionMatch = cleaned.match(/##\s*References[^#]*$/i);
+  
+  if (!referencesSectionMatch) {
+    //console.log('[SOURCE_BLOCKS] No references section found, returning response as is');
+    return cleaned;
+  }
+  
+  // Split the response into content and references
+  const contentPart = cleaned.substring(0, referencesSectionMatch.index);
+  let refPart = referencesSectionMatch[0];
+  
+  // Extract source blocks if they exist but are improperly formatted
+  const websourcesMatch = refPart.match(/.*?<websources>([\s\S]*?)<\/websources>/m);
+  const imagesourcesMatch = refPart.match(/.*?<imagesources>([\s\S]*?)<\/imagesources>/m);
+  const vectorsourcesMatch = refPart.match(/.*?<vectorsources>([\s\S]*?)<\/vectorsources>/m);
+  
+  // Format the source blocks properly
+  let sourceBlocks = "\n\n";
+  
+  if (websourcesMatch) {
+    sourceBlocks += "<websources>\n" + websourcesMatch[1].trim() + "\n</websources>\n\n";
+  } else {
+    // Add empty websources block if missing
+    sourceBlocks += "<websources>\n</websources>\n\n";
+  }
+  
+  if (imagesourcesMatch) {
+    sourceBlocks += "<imagesources>\n" + imagesourcesMatch[1].trim() + "\n</imagesources>\n\n";
+  } else {
+    // Add empty imagesources block if missing
+    sourceBlocks += "<imagesources>\n</imagesources>\n\n";
+  }
+  
+  if (vectorsourcesMatch) {
+    sourceBlocks += "<vectorsources>\n" + vectorsourcesMatch[1].trim() + "\n</vectorsources>\n";
+  } else {
+    // Try to get vector results from cache
+    const vectorResults = vectorResultsCache.get(threadId) || [];
+    
+    // Create vector sources block with text excerpts
+    const vectorReferences = vectorResults.length > 0 ? 
+      vectorResults.map((s, idx) => 
+        `[V${idx + 1}] ${s.source} - Chunk ${s.chunkIndex} - ${s.filePath}\nText excerpt: "${s.text.substring(0, 300)}${s.text.length > 300 ? '...' : ''}"`
+      ).join('\n\n') : '';
+    
+    sourceBlocks += "<vectorsources>\n" + vectorReferences + "\n</vectorsources>\n";
+  }
+  
+  // Rebuild the response with fixed source blocks
+  return contentPart + refPart.split('<websources>')[0] + sourceBlocks;
+}
+
+// Function to generate additional search queries for more comprehensive Tavily search
+async function generateSearchQueries(userQuery, geminiApiKey) {
+  // Only use the original query for all searches
+  //console.log("[SEARCH_QUERIES] Using only original query for all searches:", userQuery);
+  return [userQuery];
+}
+
 export default defineEventHandler(async (event) => {
   if (event.req.method !== 'POST') {
     event.res.statusCode = 405
@@ -391,6 +577,13 @@ export default defineEventHandler(async (event) => {
       event.res.statusCode = 400
       return { error: 'ThreadId and message are required' }
     }
+
+    console.log("==============================================");
+    console.log(`[CHAT_API] Processing new message: "${message}"`);
+    console.log(`[CHAT_API] Thread ID: ${threadId}`);
+    console.log(`[CHAT_API] Web Search Enabled: ${enableWebSearch}`);
+    console.log(`[CHAT_API] PDF Context Present: ${!!pdfContext}`);
+    console.log("==============================================");
 
     // Verify thread ownership and get thread with its messages
     const thread = await prisma.thread.findFirst({
@@ -471,8 +664,12 @@ export default defineEventHandler(async (event) => {
         }
       }
 
-      // Route the query based on type and context
-      if (type === "CONVERSATION") {
+      // Determine the query type for better routing
+      const queryType = await routeQuery(message, config.geminiApiKey)
+      console.log("[HANDLER] Query type determined:", queryType)
+
+      // Route the query based on type, context, and query type
+      if (type === "CONVERSATION" && queryType === "CASUAL_CONVERSATION") {
         processingState = 'conversation'
         
         const leafLiteModel = new ChatGoogleGenerativeAI({
@@ -516,14 +713,9 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
         console.log('[RESEARCH_PIPELINE] Search parameters determined:', searchParams)
         
         const searchOptions = {
-          searchDepth: searchParams.searchDepth || "advanced",
-          timeRange: searchParams.timeRange || "year",
-          includeAnswer: "advanced",
-          includeImages: searchParams.includeImages !== false,
-          includeImageDescriptions: true,
-          includeRawContent: true,
-          maxResults: Math.min(Math.max(searchParams.maxResults || 10, 3), 20),
+          ...searchParams,
           includeDomains: [
+            // Climate science and research domains
             "nature.com", "science.org", "sciencedirect.com", "pnas.org", "ipcc.ch",
             "nasa.gov/climate", "climate.gov", "carbonbrief.org", "unfccc.int",
             "climatecentral.org", "realclimate.org", "skepticalscience.com",
@@ -537,18 +729,60 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
             "c2es.org", "climateworks.org", "climatepolicy.org",
             "climatejusticealliance.org", "350.org", "climaterealityproject.org",
             "noaa.gov/climate", "cdp.net", "ceres.org", "climateactiontracker.org",
-            "climatenexus.org"
+            "climatenexus.org",
+            
+            // Organizations and governmental bodies
+            "apctt.org", "apctt-escap.org", "unescap.org", "unenvironment.org", 
+            "unep.org", "iea.org", "irena.org", "iucn.org", "wwf.org",
+            "greenpeace.org", "weforum.org", "unido.org", "unece.org",
+            "undp.org", "adb.org", "worldbank.org", "imf.org",
+            "adaptation-fund.org", "gcfund.org", "ctcn.org", "forestcarbonpartnership.org",
+            "fao.org", "who.int/health-topics/climate-change", 
+            "wmo.int", "undrr.org", "unocha.org", "icann.org",
+            
+            // APCTT specific domains
+            "apctt.org/techmonitor", "apctt.org/events", "apctt.org/publications",
+            "apctt.org/climate-tech", "apctt.org/technology-transfer",
+            "apctt.org/capacity-building", "apctt.org/news",
+            
+            // Regional and local climate organizations
+            "escap.un.org", "asiapacific.unwomen.org", "asean.org", 
+            "aseanenergy.org", "apec.org", "saarc-energy.org",
+            "apccc.org", "pacificclimatechange.net", "sprep.org",
+            "preventionweb.net", "adaptation-undp.org", "apan-gan.net"
           ],
         }
 
         // Perform web search
         if (enableWebSearch && tavilyClient) {
           console.log('[RESEARCH_PIPELINE] Starting Tavily web search...')
+          console.log('[RESEARCH_PIPELINE] Original user query:', message)
           try {
-            webSearchResults = await tavilyClient.search(message, searchOptions)
-            console.log("[RESEARCH_PIPELINE] Tavily Search completed successfully")
+            // Generate search query
+            const searchQueries = await generateSearchQueries(message, config.geminiApiKey);
+            console.log('[RESEARCH_PIPELINE] Generated search query:', searchQueries[0]);
+            
+            console.log(`[RESEARCH_PIPELINE] Running Tavily search with query: "${searchQueries[0]}"`);
+            //console.log(`[RESEARCH_PIPELINE] Search options:`, JSON.stringify(searchOptions, null, 2));
+            
+            try {
+              // Run a single search with the original query
+              const queryResults = await tavilyClient.search(searchQueries[0], searchOptions);
+              
+              //console.log(`[RESEARCH_PIPELINE] Tavily search completed with ${queryResults.results?.length || 0} results and ${queryResults.images?.length || 0} images`);
+              //console.log(`[RESEARCH_PIPELINE] RAW RESULTS:`, JSON.stringify(queryResults, null, 2));
+              
+              webSearchResults = queryResults;
+              
+              //console.log("[RESEARCH_PIPELINE] Tavily search completed successfully with", 
+                          //queryResults.results?.length || 0, "results and", queryResults.images?.length || 0, "images");
+            } catch (queryError) {
+              console.error(`[RESEARCH_PIPELINE] Error in Tavily search:`, queryError);
+              webSearchResults = { results: [], images: [] };
+            }
+            
           } catch (searchError) {
-            console.error("[RESEARCH_PIPELINE] Error in Tavily search:", searchError)
+            console.error("[RESEARCH_PIPELINE] Error in Tavily search process:", searchError)
             webSearchResults = { results: [], images: [] }
           }
         } else {
@@ -557,17 +791,36 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
 
         console.log('[RESEARCH_PIPELINE] Extracting sources from search results...')
         const { webSources, imageSources } = extractSourcesFromTavily(webSearchResults)
-        console.log('[RESEARCH_PIPELINE] Sources extracted - Web sources:', webSources.length, 'Image sources:', imageSources.length)
+        console.log('[RESEARCH_PIPELINE] EXTRACTED WEB SOURCES:', JSON.stringify(webSources, null, 2));
+        console.log('[RESEARCH_PIPELINE] EXTRACTED IMAGE SOURCES:', JSON.stringify(imageSources, null, 2));
 
         // Perform vector search
         console.log("[RESEARCH_PIPELINE] Starting vector search...")
         const vectorSearchResults = await searchQdrant(message, null, 5)
         console.log("[RESEARCH_PIPELINE] Vector search complete. Results:", vectorSearchResults.length)
+        
+        // Store vector search results in cache
+        vectorResultsCache.set(threadId, vectorSearchResults)
+        console.log("[RESEARCH_PIPELINE] Vector search results cached for thread:", threadId)
 
         console.log('[RESEARCH_PIPELINE] Preparing source details for prompt...')
-        const webSourcesDetails = webSources.map(source =>
-          `[${source.index}] ${source.title}\nURL: ${source.url}\nContent: ${source.content.substring(0, 1000)}${source.content.length > 1000 ? '...' : ''}`
-        ).join('\n\n')
+        const webSourcesDetails = webSources.map(source => {
+          // Extract date information from source content
+          const dateInfo = source.content.match(/\b(20\d\d)[-\/](\d\d)\b|\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](to|through|thru|[-])[-\s]?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](20\d\d)\b|\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](20\d\d)\b|\bQ[1-4][-\s](20\d\d)\b|\b(20\d\d)\b/i);
+          console.log(`[RESEARCH_PIPELINE] Processing source details for: "${source.title}"`);
+          console.log(`[RESEARCH_PIPELINE] Date pattern match: ${dateInfo ? dateInfo[0] : 'None'}`);
+          
+          const dateHighlight = dateInfo ? `PUBLICATION DATE: ${dateInfo[0]} | ` : '';
+          const recencyNote = source.recencyScore > 80 ? 'RECENT SOURCE | ' : '';
+          
+          console.log(`[RESEARCH_PIPELINE] Date highlight: ${dateHighlight}`);
+          console.log(`[RESEARCH_PIPELINE] Recency note: ${recencyNote}`);
+          
+          return `[${source.index}] ${source.title}\nURL: ${source.url}\n${recencyNote}${dateHighlight}Content: ${source.content}${source.content.length > 8000 ? '...' : ''}`
+        }).join('\n\n')
+        
+        console.log('[RESEARCH_PIPELINE] FORMATTED WEB SOURCES DETAILS (First 500 chars):');
+        console.log(webSourcesDetails.substring(0, 500) + '...');
 
         const imageSourcesDetails = imageSources.length > 0
           ? imageSources.map(img =>
@@ -576,28 +829,44 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
           : "No relevant images found in search results."
 
         const vectorSourcesDetails = vectorSearchResults.map((source, index) =>
-          `[V${index + 1}] Source: ${source.source}\nChunk Index: ${source.chunkIndex}\nContent: ${source.text.substring(0, 1000)}${source.text.length > 1000 ? '...' : ''}`
+          `[V${index + 1}] Source: ${source.source}\nChunk Index: ${source.chunkIndex}\nContent: ${source.text.substring(0, 8000)}${source.text.length > 8000 ? '...' : ''}`
         ).join('\n\n')
 
-        const researchSystemMessage = `You are Leaf, a specialized AI expert assistant focused on climate change mitigation and research. Your task is to produce a comprehensive, research-paper-style response that is a minimum of 2000 words, resembling an academic paper with extensive depth, rigor, and detail. Follow these guidelines:
+        const researchSystemMessage = `You are Leaf, a friendly AI assistant specialized in climate change and environmental topics. Your goal is to provide comprehensive, informative responses in a conversational tone. Follow these guidelines:
 
-- **Length and Depth**: The response must be at least 2000 words, structured as a full research paper with 15-20 paragraphs, covering all relevant aspects of the query exhaustively.
-- **Scientific Rigor**: Use precise, evidence-based language, integrating data, studies, and real-world examples. Explain technical terms parenthetically and use analogies for complex concepts.
-- **Narrative Style**: Write in an engaging, authoritative tone with contractions, rhetorical questions, and emphasis markers (*italic*, **bold**) to maintain reader interest.
-- **Evidence Integration**: Seamlessly weave sources into the text, citing them in-line with [number] for web/image sources and [V#] for vector sources.
+- **Conversational Style**: Write in a natural, engaging way as if having a conversation with the user directly. Use a warm, helpful tone.
+- **Comprehensive Content**: Provide detailed information about the topic with relevant facts, statistics, examples, and context.
+- **Visual Support**: CRITICAL - Embed 3-5 relevant images THROUGHOUT your response when available. Place them at strategic points where they enhance understanding of the content. Each image must have a descriptive caption that explains its relevance. DO NOT group all images together.
+- **Evidence and Citations**: Back up claims with references to source material, citing them inline using [number] or [V#] notation.
+- **Links and Resources**: IMPORTANT - Include hyperlinks throughout your response using markdown format [link text](URL). Insert these where they add value for the user.
+- **Organization**: Structure your response with clear headings and paragraphs, but maintain a flowing, conversational feel throughout.
+- **Source References**: When referencing vector sources, include the source citation [V#] and quote the relevant text that supports your point.
+- **Recency Priority**: For queries about "latest" or "recent" information, always prioritize web search results with the most recent dates. Feature the newest information prominently at the beginning of your response, especially for publications, events, or current developments.
 
-Structure your response as follows:
-- **Abstract**: A 150-200 word summary of key findings and conclusions.
-- **Introduction**: Contextualize the query with a hook ('This matters because...') and outline the paper's scope.
-- **Background**: Provide historical and scientific context (e.g., Current Situation, Science Behind It).
-- **Main Analysis**: Multiple detailed sections (e.g., Impacts, Solutions, Challenges, Case Studies) with subheadings.
-- **Discussion**: Analyze implications, trade-offs, and future directions.
-- **Conclusion**: Summarize key takeaways and actionable insights.
-- **References**: A dedicated section listing all cited sources with full details, consolidating web, image, and vector sources.`
+Your response should be thorough and informative but presented in an accessible, friendly manner. Prioritize including clear hyperlinks that the user can click for more information.`
 
-        let combinedContext = `Provide a comprehensive, research-paper-style answer to this user query: "${message}"
+        const imageCaption = imageSources.length > 0 
+            ? `${imageSources[0].description} - Additional context about the image.` 
+            : 'Description of what the image shows and why it\'s relevant';
+            
+        const imageInstructions = imageSources.length > 0 
+            ? `- CRITICAL: Integrate 3-5 relevant images THROUGHOUT the response body using markdown: ![DESCRIPTIVE CAPTION](URL)
+   - Place images at strategic points in your response where they enhance understanding
+   - DO NOT group images at the beginning or end - distribute them throughout the content
+   - Each image MUST have a descriptive caption directly below it
+   - Format each caption as: *${imageCaption}*
+   - For climate or APCTT topics, visualizations and diagrams are especially helpful` 
+            : '- No images available';
 
-The response must be a minimum of 2000 words, structured as an academic paper with 15-20 paragraphs, including an abstract, introduction, background, detailed analysis sections, discussion, conclusion, and references. Use the following information sources to craft your answer:
+        let combinedContext = `Provide a comprehensive, conversational response to this user query: "${message}"
+
+Create an engaging, detailed answer in a natural, friendly style. IMPORTANT: Include images, clickable hyperlinks, and references throughout your response. The response should feel like a conversation with a knowledgeable friend rather than a formal paper. 
+
+CRITICAL REQUIREMENT: You MUST embed 3-5 relevant images THROUGHOUT your response using markdown syntax: ![Description](URL). Distribute these images strategically throughout different sections of your answer where they enhance understanding of the concepts you're discussing. Images should be placed inline with your text, not grouped at the beginning or end.
+
+PRIORITY FOR RECENT INFORMATION: For time-sensitive queries or when users ask about "latest", "recent", or "current" information, ALWAYS prioritize the most recent web search results (with the newest dates) over vector sources. Web sources are typically more up-to-date than vector database content. For questions about publications, events, or news, check the dates in the web sources and feature the most recent information prominently at the beginning of your response.
+
+Use the following information sources:
 
 WEB SOURCES:
 ${webSourcesDetails || "No web sources available from search results."}
@@ -611,56 +880,70 @@ ${vectorSourcesDetails}
 ${pdfContent ? `PDF CONTENT:
 ${pdfContent.slice(0, 8000)}${pdfContent.length > 8000 ? '...' : ''}` : ''}
 
-Follow these formatting requirements exactly:
+Follow these formatting guidelines:
 
-1. **FORMAT USING PROFESSIONAL MARKDOWN**:
-   - Use headings (#, ##) for sections and subsections
-   - Use lists (- or 1.) and tables for data where applicable
-   - Use bold (**bold**) and italic (*italic*) for emphasis
+1. **USE CONVERSATIONAL TONE**:
+   - Write as if you're having a direct conversation with the user
+   - Use first and second person ("I", "you") naturally
+   - Be warm and helpful, avoiding overly academic language
 
-2. **START DIRECTLY WITH THE ABSTRACT**:
-   - Begin with a 150-200 word abstract summarizing findings
-   - Do NOT include greetings like "I'm Leaf" or introductory phrases
-   - Launch straight into the content
+2. **INCLUDE IMAGES THROUGHOUT**:
+   ${imageInstructions}
+   - MANDATORY: Images must appear throughout your response, not grouped together
+   - Use images to break up text and illustrate key concepts
+   - Ensure all image URLs are valid and properly formatted
 
-3. **INCLUDE IMAGES**:
-   ${imageSources.length > 0 ? `- Select 3-5 relevant images
-   - Insert using markdown: ![DESCRIPTIVE CAPTION](URL)
-   - Each image MUST have a detailed caption in italics below it, incorporating information from the image description
-   - Format each caption as: *${imageSources.length > 0 ? imageSources[0].description + ' - Relevance to the topic explained.' : 'Description of the image and its relevance'}*` : '- No images available'}
+3. **CITE SOURCES PROPERLY**:
+   - Reference web sources as [1], [2], etc.
+   - Reference images as [I1], [I2], etc.
+   - Reference vector database content as [V1], [V2], etc.
+   - Include direct quotes where helpful
+   - CHECK DATES in web sources and prioritize the MOST RECENT information
+   - For queries about "latest" content, make sure to feature the newest information first
+   - Examine URLs and content for date indicators (e.g., "2024-10", "April-June 2024")
 
-4. **CITE SOURCES PROPERLY**:
-   - Use [1], [2], etc. for web sources, [I1], [I2], etc. for image sources, and [V1], [V2], etc. for vector sources
-   - Cite 5-7 unique sources in the text, including direct quotes
-   - Include a 'References' section listing all cited sources with full details
+4. **ORGANIZATION**:
+   - Use markdown headings (## and ###) to organize content
+   - Break into logical sections with clear headings
+   - Use bullet points or numbered lists where appropriate
+   - Bold (**text**) important information
 
-5. **STRUCTURE REQUIREMENTS**:
-   - Abstract (150-200 words)
-   - Introduction (with 'This matters because...' hook)
-   - Background (historical/scientific context)
-   - 3-5 detailed analysis sections (e.g., Impacts, Solutions, Challenges)
-   - Discussion (implications and future directions)
-   - Conclusion (key takeaways)
-   - References (consolidated list of all cited sources)
+5. **INCLUDE HYPERLINKS**:
+   - IMPORTANT: Insert clickable hyperlinks directly in your text using [Link text](URL) format
+   - Add links whenever mentioning websites, organizations, or resources
+   - Link to key sources when discussing specific information
+   - Use descriptive link text rather than just URLs
 
-6. **END WITH SEGREGATED SOURCE SECTIONS**:
-   - Include a 'References' section with all cited sources (web, image, vector) listed together
-   - Follow with separate blocks:
-     <websources>
-     ${webSources.map(s => `[${s.index}] ${s.title} - ${s.url}`).join('\n')}
-     </websources>
-     <imagesources>
-     ${imageSources.map(i => `[I${i.index}] ${i.description} - ${i.url}`).join('\n')}
-     </imagesources>
-     <vectorsources>
-     ${vectorSearchResults.map(s => `[V${vectorSearchResults.indexOf(s) + 1}] ${s.source} - Chunk ${s.chunkIndex} - ${s.filePath}`).join('\n')}
-     </vectorsources>`
+6. **END WITH REFERENCES**:
+   - Conclude with a 'References' section listing all cited sources
+   - Format each reference in a consistent way
+   - IMPORTANT: Make sure to properly enclose source blocks in these exact HTML-like tags:
+
+\`\`\`
+<websources>
+${webSources.map(s => `[${s.index}] ${s.title} - ${s.url}`).join('\n')}
+</websources>
+
+<imagesources>
+${imageSources.map(i => `[I${i.index}] ${i.description} - ${i.url}`).join('\n')}
+</imagesources>
+
+<vectorsources>
+${vectorSearchResults.map(s => `[V${vectorSearchResults.indexOf(s) + 1}] ${s.source} - Chunk ${s.chunkIndex} - ${s.filePath}
+Text excerpt: "${s.text.substring(0, 300)}${s.text.length > 300 ? '...' : ''}"`).join('\n\n')}
+</vectorsources>
+\`\`\`
+
+The block tags must be exactly as shown above, with no extra spacing or characters.`
 
         console.log('[RESEARCH_PIPELINE] Initializing Gemini model for final response...')
+        console.log('[RESEARCH_PIPELINE] FIRST 8000 CHARS OF COMBINED CONTEXT:');
+        console.log(combinedContext.substring(0, 8000) + '...');
+        
         const leafExpModel = new ChatGoogleGenerativeAI({
           apiKey: config.geminiApiKey,
           model: "gemini-2.0-flash-exp",
-          temperature: 0.4,
+          temperature: 0.7,  // Increased from 0.5 to encourage more creative formatting and better image incorporation
           maxRetries: 2,
         })
 
@@ -671,7 +954,7 @@ Follow these formatting requirements exactly:
         ])
         console.log('[RESEARCH_PIPELINE] Received response from Gemini model')
         
-        aiResponse = cleanMarkdownResponse(finalResponse.content)
+        aiResponse = ensureProperSourceBlocks(finalResponse.content, threadId)
         console.log('[RESEARCH_PIPELINE] Response cleaned and ready for database')
         
       }
