@@ -11,6 +11,7 @@ import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf"
 import axios from 'axios'
 
 const prisma = new PrismaClient()
+const config = useRuntimeConfig()
 
 // Model configurations
 const MODEL_CONFIG = {
@@ -38,8 +39,8 @@ const conversationCache = new Map()
 const vectorResultsCache = new Map()
 
 // Qdrant client configuration
-const QDRANT_URL = "https://1f924b4d-5cfa-4e17-9709-e7683b563598.europe-west3-0.gcp.cloud.qdrant.io:6333"
-const QDRANT_API_KEY = "Nygu4XKFKDhPxO47WOuaY_g2YsX3XTFacn39AvxaeOwtZ2Qnjbh46A"
+const QDRANT_URL = config.qdrantUrl
+const QDRANT_API_KEY = config.qdrantApiKey
 const COLLECTION_NAME = "leaf_data_v2"
 
 const qdrantClient = new QdrantClient({
@@ -562,7 +563,6 @@ export default defineEventHandler(async (event) => {
     return { error: 'Unauthorized' }
   }
 
-  const config = useRuntimeConfig()
   try {
     const decoded = jwt.verify(token, config.jwtSecret)
     const body = await readBody(event)

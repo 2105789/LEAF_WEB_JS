@@ -8,7 +8,6 @@ export default {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: process.env.FIREBASE_PRIVATE_KEY,
     },
-    geminiThinkingApiKey: process.env.GEMINI_THINKING_API_KEY,
     tavilyApiKey: process.env.TAVILY_API_KEY,
     qdrantApiKey: process.env.QDRANT_API_KEY,
     qdrantUrl: process.env.QDRANT_URL,
