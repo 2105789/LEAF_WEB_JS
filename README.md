@@ -140,10 +140,6 @@ For more information on deploying Nuxt applications, refer to the [Nuxt deployme
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## License
-
-[Your chosen license]
-
 ## Acknowledgements
 
 - Google for the Generative AI API
