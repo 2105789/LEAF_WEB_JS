@@ -1,15 +1,15 @@
 <!-- Chat Input Component -->
 <template>
-  <div class="shrink-0 bg-white border-t border-gray-100 p-3">
+  <div class="shrink-0 bg-white border-t border-gray-100 p-2 md:p-3">
     <!-- PDF Preview/Indicator -->
     <div v-if="attachedPdfs.length > 0" class="mb-2 flex items-center gap-2 rounded-md bg-gray-50 p-2 text-sm">
-      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-red-500 shrink-0" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd" />
       </svg>
       <span class="truncate flex-1">Using context from: {{ attachedPdfs[0].name }}</span>
       <button 
         @click="showPdfModal = true"
-        class="text-gray-400 hover:text-teal-600 p-1 transition-colors"
+        class="text-gray-400 hover:text-teal-600 p-1 transition-colors shrink-0"
         title="View PDF details"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -19,7 +19,7 @@
       </button>
       <button 
         @click="clearPdf()"
-        class="text-gray-400 hover:text-red-600 p-1 transition-colors"
+        class="text-gray-400 hover:text-red-600 p-1 transition-colors shrink-0"
         title="Remove PDF"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -36,7 +36,7 @@
         @keydown.enter.shift.exact.prevent="message += '\n'"
         @input="autoGrow"
         placeholder="Type a message... (Shift+Enter for new line)"
-        class="w-full resize-none rounded-lg border-0 bg-transparent p-3 pr-24 focus:outline-none focus:ring-0 min-h-[44px] max-h-[200px] text-sm"
+        class="w-full resize-none rounded-lg border-0 bg-transparent px-2 md:px-3 py-3 pr-16 md:pr-24 focus:outline-none focus:ring-0 min-h-[44px] max-h-[200px] text-sm align-middle"
         :rows="1"
         :disabled="disabled || isLoading"
         ref="messageInput"
@@ -60,7 +60,8 @@
             'p-1.5 rounded-full transition-colors',
             attachedPdfs.length > 0 
               ? 'text-teal-500 cursor-default' 
-              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50',
+            'hidden sm:block' // Hide on mobile to save space
           ]"
           title="Upload PDF for context"
         >
@@ -102,6 +103,20 @@
       </div>
     </form>
 
+    <!-- Mobile PDF Upload Button (Fixed Position) -->
+    <button
+      v-if="!attachedPdfs.length"
+      type="button"
+      @click="$refs.fileInput?.click()"
+      class="sm:hidden fixed bottom-20 right-4 z-10 bg-teal-500 text-white p-3 rounded-full shadow-lg"
+      :disabled="disabled || isLoading"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd" />
+        <path d="M8 11a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+      </svg>
+    </button>
+
     <!-- PDF Modal -->
     <div v-if="showPdfModal" class="fixed inset-0 z-50 overflow-y-auto bg-gray-500 bg-opacity-75 flex items-center justify-center p-4">
       <div class="bg-white rounded-lg max-w-lg w-full shadow-xl relative">
@@ -140,7 +155,7 @@
               </div>
               <button 
                 @click="removePdf(index)"
-                class="text-gray-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded-full transition-colors"
+                class="text-gray-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded-full transition-colors shrink-0"
                 title="Remove PDF"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -261,7 +276,7 @@ const handleFileUpload = async (event) => {
     }]
     
     // Show user feedback
-    showPdfModal = true
+    showPdfModal.value = true
   } catch (error) {
     console.error('Error processing PDF:', error)
     alert('Failed to upload PDF')
@@ -306,4 +321,17 @@ onMounted(() => {
     messageInput.value.focus()
   }
 })
-</script> 
+</script>
+
+<style scoped>
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  textarea, button {
+    touch-action: manipulation;
+  }
+  
+  .max-h-\[200px\] {
+    max-height: 120px; /* Smaller max height on mobile */
+  }
+}
+</style> 

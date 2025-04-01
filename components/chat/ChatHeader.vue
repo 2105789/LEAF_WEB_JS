@@ -1,6 +1,6 @@
 <!-- Chat Header Component -->
 <template>
-  <div class="h-14 shrink-0 bg-white border-b border-gray-200 px-4 flex justify-between items-center">
+  <div class="shrink-0 bg-white border-b border-gray-200 px-2 md:px-4 py-2 flex justify-between items-center w-full">
     <div class="flex items-center gap-3 flex-1 min-w-0">
       <!-- Thread Title -->
       <div v-if="isEditing" class="flex items-center gap-2 flex-1 max-w-xl">
@@ -34,7 +34,7 @@
         </div>
       </div>
       <div v-else-if="thread" class="flex items-center gap-2 flex-1 min-w-0">
-        <h2 class="font-medium text-gray-900 truncate">
+        <h2 class="font-medium text-gray-900 truncate text-sm md:text-base">
           {{ thread.title }}
         </h2>
         <button 
@@ -53,7 +53,7 @@
     </div>
     
     <!-- Action Buttons -->
-    <div v-if="thread" class="flex items-center gap-2">
+    <div v-if="thread" class="flex items-center gap-1 md:gap-2">
       <button 
         @click="confirmClearThread"
         class="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
@@ -122,4 +122,13 @@ const confirmClearThread = () => {
     emit('clear')
   }
 }
-</script> 
+</script>
+
+<style scoped>
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  input, button {
+    touch-action: manipulation;
+  }
+}
+</style> 

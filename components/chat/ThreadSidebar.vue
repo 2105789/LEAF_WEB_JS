@@ -1,10 +1,23 @@
 <!-- Thread Sidebar Component -->
 <template>
-  <div class="w-64 bg-white border-r border-gray-200 flex flex-col h-full relative">
-    <!-- Logo Area -->
-    <div class="shrink-0 h-14 border-b border-gray-200 flex items-center px-4">
-      <img src="/logo.png" alt="Logo" class="h-7 object-contain">
-      <span class="ml-2 font-medium text-gray-700">LEAF Chat</span>
+  <div class="bg-white flex flex-col h-full relative">
+    <!-- Logo Area with Close Button for Mobile -->
+    <div class="shrink-0 h-14 border-b border-gray-200 flex items-center px-4 justify-between">
+      <div class="flex items-center">
+        <img src="/logo.png" alt="Logo" class="h-7 object-contain">
+        <span class="ml-2 font-medium text-gray-700">LEAF Chat</span>
+      </div>
+      
+      <!-- Close Button (Mobile Only) -->
+      <button 
+        @click="$emit('close-sidebar')"
+        class="md:hidden p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full"
+        aria-label="Close sidebar"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+        </svg>
+      </button>
     </div>
 
     <!-- New Thread Button -->
@@ -20,8 +33,8 @@
       </button>
     </div>
 
-    <!-- Threads List with virtualization -->
-    <div class="overflow-y-auto flex-1 py-2">
+    <!-- Threads List with optimized rendering for mobile -->
+    <div class="overflow-y-auto flex-1 py-2 overscroll-contain">
       <div v-if="threads.length === 0" class="text-center py-8 text-gray-500 px-4">
         No conversations yet. Start a new chat!
       </div>
@@ -154,7 +167,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['select-thread', 'create-thread', 'delete-thread', 'update-thread', 'logout'])
+const emit = defineEmits(['select-thread', 'create-thread', 'delete-thread', 'update-thread', 'logout', 'close-sidebar'])
 
 const editingThread = ref(null)
 const titleInput = ref(null)
@@ -249,5 +262,13 @@ const deleteThread = (thread) => {
 
 .animate-spin {
   animation: spin 1s linear infinite;
+}
+
+/* Touch optimizations for mobile */
+@media (max-width: 768px) {
+  .overscroll-contain {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 </style>

@@ -15,26 +15,58 @@
   
   <!-- Main Chat Interface -->
   <div v-else class="h-screen flex overflow-hidden bg-gray-50">
-    <!-- Thread Sidebar -->
-    <ThreadSidebar
-      :threads="threads"
-      :selected-thread="selectedThread"
-      :user="user"
-      @select-thread="selectThread"
-      @create-thread="createNewThread"
-      @delete-thread="deleteThread"
-      @update-thread="updateThreadTitle"
-      @logout="handleLogout"
-    />
+    <!-- Thread Sidebar - Hidden on mobile, visible with overlay when open -->
+    <div 
+      :class="[
+        'transition-all duration-300 ease-in-out z-30',
+        'md:relative md:z-auto md:block',
+        isSidebarOpen ? 'block absolute inset-0 bg-black/30' : 'hidden'
+      ]"
+      @click="isSidebarOpen = false"
+    >
+      <div 
+        class="w-64 h-full md:w-64 bg-white flex flex-col"
+        :class="isSidebarOpen ? 'shadow-xl' : 'md:shadow-none'"
+        @click.stop
+      >
+        <ThreadSidebar
+          :threads="threads"
+          :selected-thread="selectedThread"
+          :user="user"
+          @select-thread="selectThread"
+          @create-thread="createNewThread"
+          @delete-thread="deleteThread"
+          @update-thread="updateThreadTitle"
+          @logout="handleLogout"
+          @close-sidebar="isSidebarOpen = false"
+        />
+      </div>
+    </div>
 
     <!-- Chat Area -->
     <div class="flex-1 flex flex-col h-full overflow-hidden">
-      <!-- Chat Header -->
-      <ChatHeader
-        :thread="selectedThread"
-        @clear="clearThread"
-        @update-thread="updateThreadTitle"
-      />
+      <!-- Chat Header with Mobile Sidebar Toggle -->
+      <div class="flex items-center bg-white border-b border-gray-200">
+        <!-- Mobile Sidebar Toggle -->
+        <button 
+          class="md:hidden p-4 text-gray-500 hover:text-gray-700"
+          @click="isSidebarOpen = !isSidebarOpen"
+          aria-label="Toggle sidebar"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        
+        <!-- Chat Header Component -->
+        <div class="flex-1">
+          <ChatHeader
+            :thread="selectedThread"
+            @clear="clearThread"
+            @update-thread="updateThreadTitle"
+          />
+        </div>
+      </div>
 
       <!-- Messages Area -->
       <ChatMessages
@@ -62,7 +94,7 @@
       <div 
         v-for="(toast, index) in toasts" 
         :key="toast.id"
-        class="mb-2 px-4 py-2 rounded-lg shadow-lg text-sm transition-all transform translate-y-0 opacity-100"
+        class="mb-2 px-4 py-2 rounded-lg shadow-lg text-sm transition-all transform translate-y-0 opacity-100 max-w-[90vw] md:max-w-md"
         :class="[
           toast.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : 
           toast.type === 'error' ? 'bg-red-50 text-red-800 border border-red-200' : 
@@ -102,6 +134,7 @@ const isLoading = ref(false)
 const processingState = ref('general') 
 const processingTime = ref(0)
 const processingTimer = ref(null)
+const isSidebarOpen = ref(false) // Track sidebar state for mobile
 
 // Toast notifications system
 const toasts = ref([])
@@ -165,6 +198,9 @@ const fetchMessages = async (threadId) => {
         messagesContainer.value.scrollToBottom()
       }
     })
+    
+    // Auto-close sidebar on mobile after selecting a thread
+    isSidebarOpen.value = false
   } catch (error) {
     console.error('Error fetching messages:', error)
     showToast('Could not load messages', 'error')
@@ -190,6 +226,9 @@ const createNewThread = async () => {
     // Optimistically select the thread
     selectedThread.value = tempThread
     messages.value = [] // Clear messages immediately
+    
+    // Auto-close sidebar on mobile after creating a thread
+    isSidebarOpen.value = false
     
     // Then perform the actual API call
     const response = await $fetch('/api/threads', {
@@ -227,7 +266,11 @@ const createNewThread = async () => {
 
 // Select a thread
 const selectThread = async (thread) => {
-  if (selectedThread.value?.id === thread.id) return
+  if (selectedThread.value?.id === thread.id) {
+    // Just close the sidebar if it's the same thread
+    isSidebarOpen.value = false
+    return
+  }
   
   // Store previous thread for fallback
   const previousThread = selectedThread.value
@@ -249,6 +292,9 @@ const selectThread = async (thread) => {
     
     // Remove loading state
     thread.isLoading = false
+    
+    // Close sidebar on mobile
+    isSidebarOpen.value = false
     
     // Ensure message container scrolls to bottom
     nextTick(() => {
@@ -475,6 +521,13 @@ const handleLogout = async () => {
   }
 }
 
+// Close sidebar when escape key is pressed
+const handleEscKey = (e) => {
+  if (e.key === 'Escape' && isSidebarOpen.value) {
+    isSidebarOpen.value = false
+  }
+}
+
 // Watch for auth changes
 watch(user, (newUser) => {
   if (!newUser) {
@@ -487,6 +540,7 @@ onMounted(async () => {
   try {
     await fetchUser()
     await fetchThreads()
+    window.addEventListener('keydown', handleEscKey)
   } catch (error) {
     console.error('Error initializing chat:', error)
     showToast('Failed to load your data', 'error')
@@ -498,6 +552,7 @@ onMounted(async () => {
 // Clean up on unmount
 onBeforeUnmount(() => {
   stopStopwatch()
+  window.removeEventListener('keydown', handleEscKey)
 })
 </script>
 
@@ -520,4 +575,28 @@ onBeforeUnmount(() => {
   opacity: 0;
   transform: translateY(-10px);
 }
-</style> 
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  .h-screen {
+    height: 100vh;
+    height: calc(var(--vh, 1vh) * 100);
+  }
+}
+</style>
+
+<script>
+// Fix for mobile viewport height issues
+if (process.client) {
+  const setVH = () => {
+    const vh = window.innerHeight * 0.01
+    document.documentElement.style.setProperty('--vh', `${vh}px`)
+  }
+  
+  window.addEventListener('resize', setVH)
+  window.addEventListener('orientationchange', setVH)
+  
+  // Initial set
+  setVH()
+}
+</script> 
