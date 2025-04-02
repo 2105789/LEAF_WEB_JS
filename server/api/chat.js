@@ -184,7 +184,8 @@ async function determineSearchParameters(query, geminiApiKey) {
     includeAnswer: "advanced",
     includeImages: true,
     includeImageDescriptions: true,
-    includeRawContent: true
+    includeRawContent: true,
+    maxResults: 10
   };
   
   console.log("[SEARCH_PARAMS] Using fixed default parameters for all queries:", JSON.stringify(defaultParams, null, 2));
@@ -405,12 +406,18 @@ function extractSourcesFromTavily(searchResults) {
     return b.score - a.score;
   });
   
- // console.log("[TAVILY] Results after sorting by recency and relevance:");
-  sortedResults.forEach((result, index) => {
-   // console.log(`[TAVILY] [${index+1}] Title: "${result.title.substring(0, 40)}..." | Recency: ${result.recencyScore} | Score: ${result.score}`);
-  });
+  // Deduplicate results by URL while preserving order
+  const uniqueUrls = new Set();
+  const uniqueResults = [];
 
-  const webSources = sortedResults.map((result, index) => ({
+  for (const result of sortedResults) {
+    if (result.url && !uniqueUrls.has(result.url)) {
+      uniqueUrls.add(result.url);
+      uniqueResults.push(result);
+    }
+  }
+
+  const webSources = uniqueResults.map((result, index) => ({
     index: index + 1,
     title: result.title || "Untitled Source",
     url: result.url || "",
@@ -511,7 +518,35 @@ function ensureProperSourceBlocks(response, threadId) {
   let sourceBlocks = "\n\n";
   
   if (websourcesMatch) {
-    sourceBlocks += "<websources>\n" + websourcesMatch[1].trim() + "\n</websources>\n\n";
+    // Deduplicate websources if needed
+    const webSourcesContent = websourcesMatch[1].trim();
+    // Check for URL patterns
+    const urls = new Set();
+    const uniqueLines = [];
+    
+    webSourcesContent.split('\n').forEach(line => {
+      const urlMatch = line.match(/https?:\/\/[^\s)]+/);
+      if (urlMatch && urlMatch[0]) {
+        const url = urlMatch[0];
+        if (!urls.has(url)) {
+          urls.add(url);
+          uniqueLines.push(line);
+        }
+      } else {
+        // If no URL found, keep the line
+        uniqueLines.push(line);
+      }
+    });
+    
+    // If we found and removed duplicates, reindex the references
+    if (uniqueLines.length < webSourcesContent.split('\n').length) {
+      const reindexedLines = uniqueLines.map((line, idx) => {
+        return line.replace(/^\[\d+\]/, `[${idx + 1}]`);
+      });
+      sourceBlocks += "<websources>\n" + reindexedLines.join('\n') + "\n</websources>\n\n";
+    } else {
+      sourceBlocks += "<websources>\n" + webSourcesContent + "\n</websources>\n\n";
+    }
   } else {
     // Add empty websources block if missing
     sourceBlocks += "<websources>\n</websources>\n\n";
@@ -529,12 +564,14 @@ function ensureProperSourceBlocks(response, threadId) {
   } else {
     // Try to get vector results from cache
     const vectorResults = vectorResultsCache.get(threadId) || [];
+    console.log("[SOURCE_BLOCKS] Creating vector sources from cache. Results:", vectorResults.length);
     
     // Create vector sources block with text excerpts
     const vectorReferences = vectorResults.length > 0 ? 
       vectorResults.map((s, idx) => 
-        `[V${idx + 1}] ${s.source} - Chunk ${s.chunkIndex} - ${s.filePath}\nText excerpt: "${s.text.substring(0, 300)}${s.text.length > 300 ? '...' : ''}"`
-      ).join('\n\n') : '';
+        `[V${idx + 1}] ${s.source || 'Unknown Source'} - Chunk ${s.chunkIndex || 'N/A'} - ${s.filePath || 'Unknown Path'}
+Text excerpt: "${(s.text || '').substring(0, 300)}${(s.text || '').length > 300 ? '...' : ''}"`
+      ).join('\n\n') : 'No vector sources available.';
     
     sourceBlocks += "<vectorsources>\n" + vectorReferences + "\n</vectorsources>\n";
   }
@@ -791,13 +828,14 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
 
         console.log('[RESEARCH_PIPELINE] Extracting sources from search results...')
         const { webSources, imageSources } = extractSourcesFromTavily(webSearchResults)
-        console.log('[RESEARCH_PIPELINE] EXTRACTED WEB SOURCES:', JSON.stringify(webSources, null, 2));
-        console.log('[RESEARCH_PIPELINE] EXTRACTED IMAGE SOURCES:', JSON.stringify(imageSources, null, 2));
+        // console.log('[RESEARCH_PIPELINE] EXTRACTED WEB SOURCES:', JSON.stringify(webSources, null, 2));
+        // console.log('[RESEARCH_PIPELINE] EXTRACTED IMAGE SOURCES:', JSON.stringify(imageSources, null, 2));
 
         // Perform vector search
         console.log("[RESEARCH_PIPELINE] Starting vector search...")
         const vectorSearchResults = await searchQdrant(message, null, 5)
         console.log("[RESEARCH_PIPELINE] Vector search complete. Results:", vectorSearchResults.length)
+        console.log("[RESEARCH_PIPELINE] Vector search sample result:", JSON.stringify(vectorSearchResults[0] || {}, null, 2))
         
         // Store vector search results in cache
         vectorResultsCache.set(threadId, vectorSearchResults)
@@ -820,7 +858,7 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
         }).join('\n\n')
         
         console.log('[RESEARCH_PIPELINE] FORMATTED WEB SOURCES DETAILS (First 500 chars):');
-        console.log(webSourcesDetails.substring(0, 500) + '...');
+        // console.log(webSourcesDetails.substring(0, 500) + '...');
 
         const imageSourcesDetails = imageSources.length > 0
           ? imageSources.map(img =>
@@ -831,6 +869,9 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
         const vectorSourcesDetails = vectorSearchResults.map((source, index) =>
           `[V${index + 1}] Source: ${source.source}\nChunk Index: ${source.chunkIndex}\nContent: ${source.text.substring(0, 8000)}${source.text.length > 8000 ? '...' : ''}`
         ).join('\n\n')
+        
+        console.log("[RESEARCH_PIPELINE] Vector sources count:", vectorSearchResults.length)
+        console.log("[RESEARCH_PIPELINE] Vector sources details first item:", vectorSourcesDetails.substring(0, 200) + "...")
 
         const researchSystemMessage = `You are Leaf, a friendly AI assistant specialized in climate change and environmental topics. Your goal is to provide comprehensive, informative responses in a conversational tone. Follow these guidelines:
 
@@ -921,7 +962,21 @@ Follow these formatting guidelines:
 
 \`\`\`
 <websources>
-${webSources.map(s => `[${s.index}] ${s.title} - ${s.url}`).join('\n')}
+${(() => {
+  // Deduplicate web sources by URL
+  const urlMap = new Map();
+  webSources.forEach((source, idx) => {
+    if (!urlMap.has(source.url)) {
+      urlMap.set(source.url, { source, idx });
+    }
+  });
+  
+  // Create array from map and sort by original index
+  return Array.from(urlMap.values())
+    .sort((a, b) => a.idx - b.idx)
+    .map((item, newIdx) => `[${newIdx + 1}] ${item.source.title} - ${item.source.url}`)
+    .join('\n');
+})()}
 </websources>
 
 <imagesources>
@@ -929,8 +984,9 @@ ${imageSources.map(i => `[I${i.index}] ${i.description} - ${i.url}`).join('\n')}
 </imagesources>
 
 <vectorsources>
-${vectorSearchResults.map(s => `[V${vectorSearchResults.indexOf(s) + 1}] ${s.source} - Chunk ${s.chunkIndex} - ${s.filePath}
-Text excerpt: "${s.text.substring(0, 300)}${s.text.length > 300 ? '...' : ''}"`).join('\n\n')}
+${vectorSearchResults.length > 0 ? vectorSearchResults.map((s, idx) => 
+`[V${idx + 1}] ${s.source || 'Unknown Source'} - Chunk ${s.chunkIndex || 'N/A'} - ${s.filePath || 'Unknown Path'}
+Text excerpt: "${(s.text || '').substring(0, 300)}${(s.text || '').length > 300 ? '...' : ''}"`).join('\n\n') : 'No vector sources available.'}
 </vectorsources>
 \`\`\`
 

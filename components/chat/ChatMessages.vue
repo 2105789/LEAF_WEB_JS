@@ -72,12 +72,13 @@
                   </button>
                   <div v-show="isSourceTypeExpanded(message.id, 'web')" class="px-3 py-2 border-t text-xs md:text-sm">
                     <ul class="space-y-1 text-xs md:text-sm pl-2">
-                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'web')" :key="i">
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'web')" :key="i" class="py-1">
+                        <span class="font-medium text-blue-700">{{ source.match(/^\[\d+\]/) ? source.match(/^\[\d+\]/)[0] : '' }}</span>
                         <a v-if="isValidUrl(source)" :href="extractUrl(source)" target="_blank" rel="noopener noreferrer" 
-                           class="text-blue-600 hover:text-blue-800 hover:underline block truncate">
+                           class="text-blue-600 hover:text-blue-800 hover:underline inline-block">
                           {{ formatSource(source).title || formatSource(source).url }}
                         </a>
-                        <span v-else>{{ source }}</span>
+                        <span v-else>{{ source.replace(/^\[\d+\]/, '').trim() }}</span>
                       </li>
                     </ul>
                   </div>
@@ -101,12 +102,13 @@
                   </button>
                   <div v-show="isSourceTypeExpanded(message.id, 'image')" class="px-3 py-2 border-t text-xs md:text-sm">
                     <ul class="space-y-1 text-xs md:text-sm pl-2">
-                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'image')" :key="i">
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'image')" :key="i" class="py-1">
+                        <span class="font-medium text-purple-700">{{ source.match(/^\[I\d+\]/) ? source.match(/^\[I\d+\]/)[0] : '' }}</span>
                         <a v-if="isValidUrl(source)" :href="extractUrl(source)" target="_blank" rel="noopener noreferrer" 
-                           class="text-blue-600 hover:text-blue-800 hover:underline block truncate">
+                           class="text-blue-600 hover:text-blue-800 hover:underline inline-block">
                           {{ formatSource(source).title || formatSource(source).url }}
                         </a>
-                        <span v-else>{{ source }}</span>
+                        <span v-else>{{ source.replace(/^\[I\d+\]/, '').trim() }}</span>
                       </li>
                     </ul>
                   </div>
@@ -129,9 +131,19 @@
                     </svg>
                   </button>
                   <div v-show="isSourceTypeExpanded(message.id, 'vector')" class="px-3 py-2 border-t text-xs md:text-sm">
-                    <ul class="space-y-2 text-xs md:text-sm pl-2">
-                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'vector')" :key="i" class="pt-1">
-                        {{ source }}
+                    <ul class="space-y-3 text-xs md:text-sm pl-2">
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'vector')" :key="i" class="py-1 text-gray-700 whitespace-pre-line">
+                        <div v-if="source === 'No vector sources available.'">{{ source }}</div>
+                        <div v-else>
+                          <div>
+                            <span class="font-medium text-teal-700">{{ source.match(/^\[V\d+\]/) ? source.match(/^\[V\d+\]/)[0] : '' }}</span>
+                            <span class="font-medium">{{ source.replace(/^\[V\d+\]/, '').split('\nText excerpt:')[0].trim() }}</span>
+                          </div>
+                          <div class="mt-1 pl-4 text-gray-600 text-xs border-l-2 border-gray-200">
+                            {{ source.includes('Text excerpt:') ? 
+                               source.split('Text excerpt:')[1].trim().replace(/^"|"$/g, '') : '' }}
+                          </div>
+                        </div>
                       </li>
                     </ul>
                   </div>
@@ -369,12 +381,66 @@ const getSourcesIfExpanded = (content, type) => {
   }
   const match = content.match(regex[type])
   if (!match) return []
+  
+  // Special handling for vector sources to show both reference and text excerpts
+  if (type === 'vector') {
+    const vectorContent = match[1].trim();
+    if (vectorContent === 'No vector sources available.') {
+      return ['No vector sources available.'];
+    }
+    
+    // Split by lines but preserve multi-line text excerpts
+    const entries = [];
+    const lines = vectorContent.split('\n');
+    let currentEntry = null;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('[V')) {
+        // Start a new entry
+        if (currentEntry) {
+          entries.push(currentEntry);
+        }
+        currentEntry = line;
+      } else if (line.startsWith('Text excerpt:') && currentEntry) {
+        // This is a text excerpt for the current entry
+        currentEntry += '\n' + line;
+      } else if (line && currentEntry) {
+        // This is part of the current entry (likely part of the text excerpt)
+        currentEntry += '\n' + line;
+      }
+    }
+    
+    // Add the last entry
+    if (currentEntry) {
+      entries.push(currentEntry);
+    }
+    
+    return entries;
+  }
+  
   return match[1].trim().split('\n').filter(line => line.trim())
 }
 
 // Count sources by type
 const countSources = (content, type) => {
-  return getSourcesIfExpanded(content, type).length
+  if (type === 'vector') {
+    const regex = /<vectorsources>([^]*?)<\/vectorsources>/s;
+    const match = content.match(regex);
+    if (!match) return 0;
+    
+    const vectorContent = match[1].trim();
+    if (vectorContent === 'No vector sources available.') {
+      return 0;
+    }
+    
+    // Count entries that start with [V
+    // With text excerpts, entries are now separated by blank lines
+    const entries = vectorContent.split('\n\n');
+    return entries.filter(entry => entry.trim().startsWith('[V')).length;
+  }
+  
+  return getSourcesIfExpanded(content, type).length;
 }
 
 // Toggle source type expansion for a message
@@ -411,13 +477,15 @@ const extractUrl = (source) => {
 
 // Format source for display
 const formatSource = (source) => {
-  // Remove any leading [IX] index
+  // Remove any leading [X] or [IX] or [VX] index
   const withoutIndex = source.replace(/^\[[^\]]+\]\s*/, '')
   // Get the text before the URL
   const url = extractUrl(source)
   let title = withoutIndex
   if (url) {
     title = withoutIndex.split(url)[0].trim()
+    // Remove trailing dash or hyphen if present
+    title = title.replace(/\s*[-–]\s*$/, '')
   }
   return { title, url }
 }
