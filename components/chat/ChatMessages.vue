@@ -72,7 +72,7 @@
                   </button>
                   <div v-show="isSourceTypeExpanded(message.id, 'web')" class="px-3 py-2 border-t text-xs md:text-sm">
                     <ul class="space-y-1 text-xs md:text-sm pl-2">
-                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'web')" :key="i" class="py-1">
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'web')" :key="i" class="py-1" :id="'source-' + (i + 1)">
                         <span class="font-medium text-blue-700">{{ source.match(/^\[\d+\]/) ? source.match(/^\[\d+\]/)[0] : '' }}</span>
                         <a v-if="isValidUrl(source)" :href="extractUrl(source)" target="_blank" rel="noopener noreferrer" 
                            class="text-blue-600 hover:text-blue-800 hover:underline inline-block">
@@ -102,7 +102,7 @@
                   </button>
                   <div v-show="isSourceTypeExpanded(message.id, 'image')" class="px-3 py-2 border-t text-xs md:text-sm">
                     <ul class="space-y-1 text-xs md:text-sm pl-2">
-                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'image')" :key="i" class="py-1">
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'image')" :key="i" class="py-1" :id="'source-' + (i + 1)">
                         <span class="font-medium text-purple-700">{{ source.match(/^\[I\d+\]/) ? source.match(/^\[I\d+\]/)[0] : '' }}</span>
                         <a v-if="isValidUrl(source)" :href="extractUrl(source)" target="_blank" rel="noopener noreferrer" 
                            class="text-blue-600 hover:text-blue-800 hover:underline inline-block">
@@ -132,7 +132,7 @@
                   </button>
                   <div v-show="isSourceTypeExpanded(message.id, 'vector')" class="px-3 py-2 border-t text-xs md:text-sm">
                     <ul class="space-y-3 text-xs md:text-sm pl-2">
-                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'vector')" :key="i" class="py-1 text-gray-700 whitespace-pre-line">
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'vector')" :key="i" class="py-1 text-gray-700 whitespace-pre-line" :id="'source-' + (i + 1)">
                         <div v-if="source === 'No vector sources available.'">{{ source }}</div>
                         <div v-else>
                           <div>
@@ -505,6 +505,11 @@ const getProcessedContent = (message) => {
     return contentCache.get(cacheKey)
   }
   
+  // Extract source sections for reference links
+  const webSources = getSourcesIfExpanded(message.content, 'web')
+  const imageSources = getSourcesIfExpanded(message.content, 'image')
+  const vectorSources = getSourcesIfExpanded(message.content, 'vector')
+  
   // Remove source sections from display
   const cleanContent = message.content
     .replace(/<websources>[^]*?<\/websources>/s, '')
@@ -514,12 +519,77 @@ const getProcessedContent = (message) => {
   // Render markdown
   let rendered = DOMPurify.sanitize(md.render(cleanContent))
   
+  // Create a temporary div to manipulate the content
+  const tempDiv = document.createElement('div')
+  tempDiv.innerHTML = rendered
+  
+  // Convert reference numbers to clickable links
+  const convertReferencesToLinks = (element) => {
+    const textNodes = []
+    const walker = document.createTreeWalker(
+      element,
+      NodeFilter.SHOW_TEXT,
+      null,
+      false
+    )
+    
+    let node
+    while (node = walker.nextNode()) {
+      textNodes.push(node)
+    }
+    
+    textNodes.forEach(node => {
+      const text = node.textContent
+      // Match [1], [2], etc. but not within code blocks
+      const regex = /\[(\d+)\]/g
+      let match
+      let lastIndex = 0
+      const fragment = document.createDocumentFragment()
+      
+      while ((match = regex.exec(text)) !== null) {
+        // Add text before the match
+        if (match.index > lastIndex) {
+          fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)))
+        }
+        
+        // Create the link
+        const link = document.createElement('a')
+        link.href = `#source-${match[1]}`
+        link.className = 'text-blue-600 hover:text-blue-800 hover:underline cursor-pointer'
+        link.textContent = match[0]
+        link.onclick = (e) => {
+          e.preventDefault()
+          const target = document.getElementById(`source-${match[1]}`)
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth' })
+            // Add highlight effect
+            target.classList.add('bg-blue-50')
+            setTimeout(() => target.classList.remove('bg-blue-50'), 2000)
+          }
+        }
+        fragment.appendChild(link)
+        
+        lastIndex = match.index + match[0].length
+      }
+      
+      // Add remaining text
+      if (lastIndex < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex)))
+      }
+      
+      // Replace the text node with the fragment
+      node.parentNode.replaceChild(fragment, node)
+    })
+  }
+  
+  // Apply to all text nodes except those within code blocks
+  const elements = tempDiv.querySelectorAll('*:not(pre):not(code)')
+  elements.forEach(element => {
+    convertReferencesToLinks(element)
+  })
+  
   // Hide images if includeImages is false or in concise mode
   if (!effectiveImageSetting) {
-    const tempDiv = document.createElement('div')
-    tempDiv.innerHTML = rendered
-    
-    // Find all images and replace them with placeholders
     const images = tempDiv.querySelectorAll('img')
     images.forEach(img => {
       const imgPlaceholder = document.createElement('div')
@@ -529,9 +599,9 @@ const getProcessedContent = (message) => {
         '🖼️ Image hidden (toggle images to view)'
       img.parentNode.replaceChild(imgPlaceholder, img)
     })
-    
-    rendered = tempDiv.innerHTML
   }
+  
+  rendered = tempDiv.innerHTML
   
   // Cache the result
   contentCache.set(cacheKey, rendered)

@@ -9,6 +9,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf"
 import axios from 'axios'
+import config from '../config/leaf-config.json'
 
 const prisma = new PrismaClient()
 const config = useRuntimeConfig()
@@ -35,8 +36,11 @@ let tavilyClient = null
 // In-memory cache for active conversations
 const conversationCache = new Map()
 
-// In-memory cache for vector search results by threadId
+// Cache for vector search results
 const vectorResultsCache = new Map()
+
+// Cache for web sources
+const webSourcesGlobalCache = new Map()
 
 // Qdrant client configuration
 const QDRANT_URL = config.qdrantUrl
@@ -288,7 +292,7 @@ Return ONLY the category name, nothing else. No explanations.`
 // Function to extract and format sources from search results
 function extractSourcesFromTavily(searchResults) {
   if (!searchResults || !searchResults.results || !Array.isArray(searchResults.results)) {
-    console.error("[TAVILY] Invalid search results structure")
+    console.error("[TAVILY] Invalid search results structure", searchResults)
     return { webSources: [], imageSources: [] }
   }
 
@@ -296,144 +300,189 @@ function extractSourcesFromTavily(searchResults) {
   const extractDateIndicators = (text) => {
     if (!text) return null;
     
-    // Look for year-month patterns (2024-10, 2023-03, etc.)
-    const yearMonthPattern = /\b(20\d\d)[-\/](\d\d)\b/;
-    // Look for month-year patterns (April-June 2024, Jan 2023, etc.)
-    const monthYearPattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](\d{4})\b/i;
-    // Look for quarter patterns (Q1 2024, Q4 2023, etc.)
-    const quarterPattern = /\bQ[1-4][-\s](20\d\d)\b/i;
-    // Look for period patterns (April-June 2024, Jan-Mar 2023, etc.)
-    const periodPattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](to|through|thru|[-])[-\s]?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](20\d\d)\b/i;
-    
-    // Try to match each pattern
-    const yearMonthMatch = text.match(yearMonthPattern);
-    const monthYearMatch = text.match(monthYearPattern);
-    const quarterMatch = text.match(quarterPattern);
-    const periodMatch = text.match(periodPattern);
-    
-    // Return the first match found, with priority
-    if (yearMonthMatch) return { year: yearMonthMatch[1], month: yearMonthMatch[2], text: yearMonthMatch[0] };
-    if (monthYearMatch) return { year: monthYearMatch[2], month: monthYearMatch[1], text: monthYearMatch[0] };
-    if (quarterMatch) return { year: quarterMatch[1], quarter: true, text: quarterMatch[0] };
-    if (periodMatch) return { year: periodMatch[4], period: true, text: periodMatch[0] };
-    
-    // Look for just year as a fallback
-    const yearMatch = text.match(/\b(20\d\d)\b/);
-    if (yearMatch) return { year: yearMatch[1], text: yearMatch[0] };
+    try {
+      // Look for year-month patterns (2024-10, 2023-03, etc.)
+      const yearMonthPattern = /\b(20\d\d)[-\/](\d\d)\b/;
+      // Look for month-year patterns (April-June 2024, Jan 2023, etc.)
+      const monthYearPattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](\d{4})\b/i;
+      // Look for quarter patterns (Q1 2024, Q4 2023, etc.)
+      const quarterPattern = /\bQ[1-4][-\s](20\d\d)\b/i;
+      // Look for period patterns (April-June 2024, Jan-Mar 2023, etc.)
+      const periodPattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](to|through|thru|[-])[-\s]?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](20\d\d)\b/i;
+      
+      // Try to match each pattern
+      const yearMonthMatch = text.match(yearMonthPattern);
+      const monthYearMatch = text.match(monthYearPattern);
+      const quarterMatch = text.match(quarterPattern);
+      const periodMatch = text.match(periodPattern);
+      
+      // Return the first match found, with priority
+      if (yearMonthMatch) return { year: yearMonthMatch[1], month: yearMonthMatch[2], text: yearMonthMatch[0] };
+      if (monthYearMatch) return { year: monthYearMatch[2], month: monthYearMatch[1], text: monthYearMatch[0] };
+      if (quarterMatch) return { year: quarterMatch[1], quarter: true, text: quarterMatch[0] };
+      if (periodMatch) return { year: periodMatch[4], period: true, text: periodMatch[0] };
+      
+      // Look for just year as a fallback
+      const yearMatch = text.match(/\b(20\d\d)\b/);
+      if (yearMatch) return { year: yearMatch[1], text: yearMatch[0] };
+    } catch (err) {
+      console.error("[TAVILY] Error extracting date indicators:", err);
+    }
     
     return null;
   };
   
   // Score recency based on date indicators
   const scoreRecency = (result) => {
-    // Check title, URL and content for date indicators
-    const titleDate = extractDateIndicators(result.title);
-    const urlDate = extractDateIndicators(result.url);
-    const contentDate = extractDateIndicators(result.content);
-    
-    //console.log(`[TAVILY] Recency scoring for result: "${result.title.substring(0, 30)}..."`);
-    //console.log(`[TAVILY] Date from title: ${titleDate ? JSON.stringify(titleDate) : 'None'}`);
-    //console.log(`[TAVILY] Date from URL: ${urlDate ? JSON.stringify(urlDate) : 'None'}`);
-    //console.log(`[TAVILY] Date from content: ${contentDate ? JSON.stringify(contentDate) : 'None'}`);
-    
-    // Use the most specific date found (prioritize content, then title, then URL)
-    const dateInfo = contentDate || titleDate || urlDate;
-    
-    if (!dateInfo) {
-      //console.log(`[TAVILY] No date information found, setting recency score to 0`);
+    try {
+      // Check title, URL and content for date indicators
+      const titleDate = extractDateIndicators(result.title);
+      const urlDate = extractDateIndicators(result.url);
+      const contentDate = extractDateIndicators(result.content);
+      
+      // Use the most specific date found (prioritize content, then title, then URL)
+      const dateInfo = contentDate || titleDate || urlDate;
+      
+      if (!dateInfo) {
+        return 0;
+      }
+      
+      // Calculate recency score - higher for more recent dates
+      const currentYear = new Date().getFullYear();
+      const yearDiff = currentYear - parseInt(dateInfo.year);
+      
+      // Base score on how recent the year is
+      let recencyScore = 100 - (yearDiff * 30);
+      
+      // If we have month info, refine the score further
+      if (dateInfo.month) {
+        const currentMonth = new Date().getMonth() + 1; // 1-12
+        
+        // Convert month name to number if necessary
+        let monthNum = dateInfo.month;
+        if (isNaN(monthNum)) {
+          const monthNames = {
+            "jan": 1, "january": 1,
+            "feb": 2, "february": 2,
+            "mar": 3, "march": 3,
+            "apr": 4, "april": 4,
+            "may": 5,
+            "jun": 6, "june": 6,
+            "jul": 7, "july": 7,
+            "aug": 8, "august": 8,
+            "sep": 9, "september": 9,
+            "oct": 10, "october": 10,
+            "nov": 11, "november": 11,
+            "dec": 12, "december": 12
+          };
+          monthNum = monthNames[dateInfo.month.toLowerCase()] || 1;
+        }
+        
+        // If same year, refine by month
+        if (yearDiff === 0) {
+          recencyScore = 100 - ((currentMonth - monthNum) * 2); // Deduct 2 points per month older
+        }
+      }
+      
+      // Cap score between 0 and 100
+      recencyScore = Math.max(0, Math.min(100, recencyScore));
+      
+      return recencyScore;
+    } catch (err) {
+      console.error("[TAVILY] Error calculating recency score:", err);
       return 0;
     }
-    
-    // Calculate recency score - higher for more recent dates
-    const currentYear = new Date().getFullYear();
-    const yearDiff = currentYear - parseInt(dateInfo.year);
-    
-    // Base score on how recent the year is
-    let recencyScore = 100 - (yearDiff * 30); // Deduct 30 points per year older
-    
-    // If we have month info, refine the score further
-    if (dateInfo.month) {
-      const currentMonth = new Date().getMonth() + 1; // 1-12
-      
-      // Convert month name to number if necessary
-      let monthNum = dateInfo.month;
-      if (isNaN(monthNum)) {
-        const monthNames = {
-          "jan": 1, "january": 1,
-          "feb": 2, "february": 2,
-          "mar": 3, "march": 3,
-          "apr": 4, "april": 4,
-          "may": 5,
-          "jun": 6, "june": 6,
-          "jul": 7, "july": 7,
-          "aug": 8, "august": 8,
-          "sep": 9, "september": 9,
-          "oct": 10, "october": 10,
-          "nov": 11, "november": 11,
-          "dec": 12, "december": 12
-        };
-        monthNum = monthNames[dateInfo.month.toLowerCase()] || 1;
-      }
-      
-      // If same year, refine by month
-      if (yearDiff === 0) {
-        recencyScore = 100 - ((currentMonth - monthNum) * 2); // Deduct 2 points per month older
-      }
-    }
-    
-    // Cap score between 0 and 100
-    recencyScore = Math.max(0, Math.min(100, recencyScore));
-    console.log(`[TAVILY] Final recency score: ${recencyScore} for date: ${dateInfo.text}`);
-    
-    return recencyScore;
   };
 
-  // Add recency score to results
-  const scoredResults = searchResults.results.map(result => ({
-    ...result,
-    recencyScore: scoreRecency(result)
-  }));
+  try {
+    // Add recency score to results
+    const scoredResults = searchResults.results.map(result => ({
+      ...result,
+      recencyScore: scoreRecency(result)
+    }));
+    
+    // Sort by recency score (higher first) then by original score
+    const sortedResults = scoredResults.sort((a, b) => {
+      // If recency scores differ significantly, prioritize recency
+      if (Math.abs(a.recencyScore - b.recencyScore) > 20) {
+        return b.recencyScore - a.recencyScore;
+      }
+      // Otherwise, use original score
+      return b.score - a.score;
+    });
+    
+    // Deduplicate results by URL while preserving order
+    const uniqueUrls = new Set();
+    const uniqueResults = [];
   
-  // Sort by recency score (higher first) then by original score
-  const sortedResults = scoredResults.sort((a, b) => {
-    // If recency scores differ significantly, prioritize recency
-    if (Math.abs(a.recencyScore - b.recencyScore) > 20) {
-      //console.log(`[TAVILY] Sorting by recency: "${a.title.substring(0, 30)}..." (${a.recencyScore}) vs "${b.title.substring(0, 30)}..." (${b.recencyScore})`);
-      return b.recencyScore - a.recencyScore;
+    for (const result of sortedResults) {
+      if (result.url && !uniqueUrls.has(result.url)) {
+        uniqueUrls.add(result.url);
+        uniqueResults.push(result);
+      }
     }
-    // Otherwise, use original score
-    //console.log(`[TAVILY] Sorting by original score: "${a.title.substring(0, 30)}..." (${a.score}) vs "${b.title.substring(0, 30)}..." (${b.score})`);
-    return b.score - a.score;
-  });
   
-  // Deduplicate results by URL while preserving order
-  const uniqueUrls = new Set();
-  const uniqueResults = [];
-
-  for (const result of sortedResults) {
-    if (result.url && !uniqueUrls.has(result.url)) {
-      uniqueUrls.add(result.url);
-      uniqueResults.push(result);
-    }
+    // Format web sources with proper structure
+    const webSources = uniqueResults.map((result, index) => {
+      try {
+        // Extract date information
+        const dateInfo = extractDateIndicators(result.content) || 
+                        extractDateIndicators(result.title) || 
+                        extractDateIndicators(result.url);
+        
+        // Format the source entry
+        const sourceEntry = {
+          index: index + 1,
+          title: result.title || "Untitled Source",
+          url: result.url || "",
+          content: [result.rawContent, result.content, result.content_snippet]
+            .find(content => typeof content === 'string') || "",
+          recencyScore: result.recencyScore,
+          dateInfo: dateInfo ? dateInfo.text : null
+        };
+    
+        return sourceEntry;
+      } catch (err) {
+        console.error("[TAVILY] Error formatting web source:", err);
+        // Return a minimal valid source entry
+        return {
+          index: index + 1,
+          title: result.title || "Untitled Source",
+          url: result.url || "",
+          content: "",
+          recencyScore: 0,
+          dateInfo: null
+        };
+      }
+    });
+  
+    // Format image sources
+    const imageSources = (searchResults.images || []).map((img, index) => {
+      try {
+        return {
+          index: index + 1,
+          url: img.url || "",
+          description: img.description || `Image related to query`,
+          sourceUrl: img.source_url || ""
+        };
+      } catch (err) {
+        console.error("[TAVILY] Error formatting image source:", err);
+        // Return a minimal valid image source
+        return {
+          index: index + 1,
+          url: "",
+          description: "Image (error parsing metadata)",
+          sourceUrl: ""
+        };
+      }
+    });
+  
+    console.log(`[TAVILY] Successfully processed ${webSources.length} web sources and ${imageSources.length} image sources`);
+    return { webSources, imageSources };
+  } catch (err) {
+    console.error("[TAVILY] Critical error in extractSourcesFromTavily:", err);
+    return { webSources: [], imageSources: [] };
   }
-
-  const webSources = uniqueResults.map((result, index) => ({
-    index: index + 1,
-    title: result.title || "Untitled Source",
-    url: result.url || "",
-    content: [result.rawContent, result.content, result.content_snippet]
-      .find(content => typeof content === 'string') || "",
-    recencyScore: result.recencyScore
-  }));
-
-  const imageSources = (searchResults.images || []).map((img, index) => ({
-    index: index + 1,
-    url: img.url || "",
-    description: img.description || `Image related to query`,
-    sourceUrl: img.source_url || ""
-  }));
-
-  return { webSources, imageSources };
 }
 
 // Helper function to validate PDF data
@@ -483,6 +532,8 @@ function ensureProperSourceBlocks(response, threadId) {
   // First clean the response
   let cleaned = cleanMarkdownResponse(response);
   
+  console.log('[SOURCE_BLOCKS] Ensuring proper source blocks formatting');
+  
   // Check if source blocks are properly formatted
   const hasWebsources = cleaned.includes('<websources>') && cleaned.includes('</websources>');
   const hasImagesources = cleaned.includes('<imagesources>') && cleaned.includes('</imagesources>');
@@ -490,19 +541,40 @@ function ensureProperSourceBlocks(response, threadId) {
   
   // If all source blocks are present and properly formatted, return as is
   if (hasWebsources && hasImagesources && hasVectorsources) {
-    //console.log('[SOURCE_BLOCKS] Source blocks are properly formatted');
+    console.log('[SOURCE_BLOCKS] Source blocks are properly formatted');
     return cleaned;
   }
   
-  // Fix source blocks if they are improperly formatted
-  //console.log('[SOURCE_BLOCKS] Fixing source block formatting');
+  console.log('[SOURCE_BLOCKS] Some source blocks missing or improperly formatted');
   
   // Extract the references section (everything after "## References" or similar)
   const referencesSectionMatch = cleaned.match(/##\s*References[^#]*$/i);
   
   if (!referencesSectionMatch) {
-    //console.log('[SOURCE_BLOCKS] No references section found, returning response as is');
-    return cleaned;
+    console.log('[SOURCE_BLOCKS] No references section found, adding one');
+    // If no references section found, add one
+    cleaned += '\n\n## References\n';
+    // Get the web sources from cache if available
+    const webSourcesCache = webSourcesGlobalCache.get(threadId) || [];
+    
+    // Format source blocks
+    let sourceBlocks = "\n\n";
+    
+    // Add web sources block
+    if (webSourcesCache.length > 0) {
+      const formattedWebSources = webSourcesCache.map((source, idx) => 
+        `[${idx + 1}] ${source.title || 'Untitled Source'} - ${source.url || 'No URL'}`
+      ).join('\n');
+      sourceBlocks += "<websources>\n" + formattedWebSources + "\n</websources>\n\n";
+    } else {
+      sourceBlocks += "<websources>\n</websources>\n\n";
+    }
+    
+    // Add empty image sources and vector sources blocks
+    sourceBlocks += "<imagesources>\n</imagesources>\n\n";
+    sourceBlocks += "<vectorsources>\nNo vector sources available.\n</vectorsources>\n";
+    
+    return cleaned + sourceBlocks;
   }
   
   // Split the response into content and references
@@ -518,6 +590,7 @@ function ensureProperSourceBlocks(response, threadId) {
   let sourceBlocks = "\n\n";
   
   if (websourcesMatch) {
+    console.log('[SOURCE_BLOCKS] Found websources, validating...');
     // Deduplicate websources if needed
     const webSourcesContent = websourcesMatch[1].trim();
     // Check for URL patterns
@@ -540,6 +613,7 @@ function ensureProperSourceBlocks(response, threadId) {
     
     // If we found and removed duplicates, reindex the references
     if (uniqueLines.length < webSourcesContent.split('\n').length) {
+      console.log('[SOURCE_BLOCKS] Deduplicating and reindexing websources');
       const reindexedLines = uniqueLines.map((line, idx) => {
         return line.replace(/^\[\d+\]/, `[${idx + 1}]`);
       });
@@ -548,8 +622,22 @@ function ensureProperSourceBlocks(response, threadId) {
       sourceBlocks += "<websources>\n" + webSourcesContent + "\n</websources>\n\n";
     }
   } else {
-    // Add empty websources block if missing
-    sourceBlocks += "<websources>\n</websources>\n\n";
+    console.log('[SOURCE_BLOCKS] No websources found, checking cache');
+    // Try to get web sources from cache
+    const webSourcesCache = webSourcesGlobalCache.get(threadId) || [];
+    console.log('[SOURCE_BLOCKS] Web sources from cache:', webSourcesCache.length);
+    
+    if (webSourcesCache.length > 0) {
+      console.log('[SOURCE_BLOCKS] Creating websources from cache');
+      // Create websources block with cached sources
+      const formattedWebSources = webSourcesCache.map((source, idx) => 
+        `[${idx + 1}] ${source.title || 'Untitled Source'} - ${source.url || 'No URL'}`
+      ).join('\n');
+      sourceBlocks += "<websources>\n" + formattedWebSources + "\n</websources>\n\n";
+    } else {
+      // Add empty websources block if missing
+      sourceBlocks += "<websources>\n</websources>\n\n";
+    }
   }
   
   if (imagesourcesMatch) {
@@ -837,9 +925,24 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
         }
 
         console.log('[RESEARCH_PIPELINE] Extracting sources from search results...')
-        const { webSources, imageSources } = extractSourcesFromTavily(webSearchResults)
-        // console.log('[RESEARCH_PIPELINE] EXTRACTED WEB SOURCES:', JSON.stringify(webSources, null, 2));
-        // console.log('[RESEARCH_PIPELINE] EXTRACTED IMAGE SOURCES:', JSON.stringify(imageSources, null, 2));
+        // Extract web and image sources from search results
+        let webSources = [], imageSources = [];
+        
+        try {
+          const extractedSources = extractSourcesFromTavily(webSearchResults);
+          webSources = extractedSources.webSources || [];
+          imageSources = extractedSources.imageSources || [];
+          
+          console.log(`[RESEARCH_PIPELINE] Extracted ${webSources.length} web sources and ${imageSources.length} image sources`);
+        } catch (error) {
+          console.error('[RESEARCH_PIPELINE] Error extracting sources from search results:', error);
+          webSources = [];
+          imageSources = [];
+        }
+        
+        // Store web sources in global cache for recovery if needed
+        webSourcesGlobalCache.set(threadId, webSources);
+        console.log(`[RESEARCH_PIPELINE] Stored ${webSources.length} web sources in global cache for thread ${threadId}`);
 
         // Perform vector search
         console.log("[RESEARCH_PIPELINE] Starting vector search...")
@@ -911,66 +1014,23 @@ Your response should be thorough and informative but presented in an accessible,
 
         let combinedContext = `Provide a comprehensive, conversational response to this user query: "${message}"
 
-Create an engaging, detailed answer in a natural, friendly style. IMPORTANT: Include images, clickable hyperlinks, and references throughout your response. The response should feel like a conversation with a knowledgeable friend rather than a formal paper. 
+Based on my web search, I found the following information:
 
-CRITICAL REQUIREMENT: You MUST embed 3-5 relevant images THROUGHOUT your response using markdown syntax: ![Description](URL). Distribute these images strategically throughout different sections of your answer where they enhance understanding of the concepts you're discussing. Images should be placed inline with your text, not grouped at the beginning or end.
-
-PRIORITY FOR RECENT INFORMATION: For time-sensitive queries or when users ask about "latest", "recent", or "current" information, ALWAYS prioritize the most recent web search results (with the newest dates) over vector sources. Web sources are typically more up-to-date than vector database content. For questions about publications, events, or news, check the dates in the web sources and feature the most recent information prominently at the beginning of your response.
-
-Use the following information sources:
-
-WEB SOURCES:
 ${webSourcesDetails || "No web sources available from search results."}
 
-IMAGE SOURCES:
-${imageSourcesDetails}
+${includeImages && imageSources.length > 0 ? `\nBased on my image search, I found these relevant images:\n\n${imageSourcesDetails}` : ''}
 
-VECTOR SOURCES:
-${vectorSourcesDetails}
+${vectorSearchResults.length > 0 ? `\nBased on your uploaded documents, I found these relevant excerpts:\n\n${vectorSearchResults.map((s, idx) => `[${idx + 1}] ${s.filePath ? `From ${s.filePath}` : 'From your document'} - Chunk ${s.chunkIndex || 'N/A'}\n${s.text}`).join('\n\n')}` : ''}
 
-${pdfContent ? `PDF CONTENT:
-${pdfContent.slice(0, 8000)}${pdfContent.length > 8000 ? '...' : ''}` : ''}
+${mode === 'concise' ? 'Provide a concise answer limited to 1-2 paragraphs maximum. Do not include images in your response.' : 'Provide a detailed, comprehensive answer with multiple sections where appropriate.'}
 
-Follow these formatting guidelines:
+Your response MUST include a References section at the end that includes ALL web sources and other sources used. 
 
-1. **USE CONVERSATIONAL TONE**:
-   - Write as if you're having a direct conversation with the user
-   - Use first and second person ("I", "you") naturally
-   - Be warm and helpful, avoiding overly academic language
-
-2. **INCLUDE IMAGES THROUGHOUT**:
-   ${imageInstructions}
-   - MANDATORY: Images must appear throughout your response, not grouped together
-   - Use images to break up text and illustrate key concepts
-   - Ensure all image URLs are valid and properly formatted
-
-3. **CITE SOURCES PROPERLY**:
-   - Reference web sources as [1], [2], etc.
-   - Reference images as [I1], [I2], etc.
-   - Reference vector database content as [V1], [V2], etc.
-   - Include direct quotes where helpful
-   - CHECK DATES in web sources and prioritize the MOST RECENT information
-   - For queries about "latest" content, make sure to feature the newest information first
-   - Examine URLs and content for date indicators (e.g., "2024-10", "April-June 2024")
-
-4. **ORGANIZATION**:
-   - Use markdown headings (## and ###) to organize content
-   - Break into logical sections with clear headings
-   - Use bullet points or numbered lists where appropriate
-   - Bold (**text**) important information
-
-5. **INCLUDE HYPERLINKS**:
-   - IMPORTANT: Insert clickable hyperlinks directly in your text using [Link text](URL) format
-   - Add links whenever mentioning websites, organizations, or resources
-   - Link to key sources when discussing specific information
-   - Use descriptive link text rather than just URLs
-
-6. **END WITH REFERENCES**:
-   - Conclude with a 'References' section listing all cited sources
-   - Format each reference in a consistent way
-   - IMPORTANT: Make sure to properly enclose source blocks in these exact HTML-like tags:
+Format the references EXACTLY like this:
 
 \`\`\`
+## References
+
 <websources>
 ${(() => {
   // Deduplicate web sources by URL
@@ -984,7 +1044,11 @@ ${(() => {
   // Create array from map and sort by original index
   return Array.from(urlMap.values())
     .sort((a, b) => a.idx - b.idx)
-    .map((item, newIdx) => `[${newIdx + 1}] ${item.source.title} - ${item.source.url}`)
+    .map((item, newIdx) => {
+      // Check if we have a dateInfo to include
+      const dateInfo = item.source.dateInfo ? ` (${item.source.dateInfo})` : '';
+      return `[${newIdx + 1}] ${item.source.title}${dateInfo} - ${item.source.url}`;
+    })
     .join('\n');
 })()}
 </websources>
@@ -1000,7 +1064,7 @@ Text excerpt: "${(s.text || '').substring(0, 300)}${(s.text || '').length > 300 
 </vectorsources>
 \`\`\`
 
-The block tags must be exactly as shown above, with no extra spacing or characters.`
+The block tags must be exactly as shown above, with no extra spacing or characters. ALWAYS include ALL these source blocks in your response, even if they're empty.`
 
         console.log('[RESEARCH_PIPELINE] Initializing Gemini model for final response...')
         console.log('[RESEARCH_PIPELINE] FIRST 8000 CHARS OF COMBINED CONTEXT:');
