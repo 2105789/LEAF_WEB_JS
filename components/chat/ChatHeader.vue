@@ -1,6 +1,6 @@
 <!-- Chat Header Component -->
 <template>
-  <div class="shrink-0 bg-white border-b border-gray-200 px-2 md:px-4 py-2 flex justify-between items-center w-full">
+  <div class="h-14 shrink-0 bg-white border-b border-gray-200 px-2 md:px-4 py-2 flex justify-between items-center w-full">
     <div class="flex items-center gap-3 flex-1 min-w-0">
       <!-- Thread Title -->
       <div v-if="isEditing" class="flex items-center gap-2 flex-1 max-w-xl">

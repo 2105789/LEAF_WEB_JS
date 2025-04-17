@@ -72,13 +72,20 @@
                   </button>
                   <div v-show="isSourceTypeExpanded(message.id, 'web')" class="px-3 py-2 border-t text-xs md:text-sm">
                     <ul class="space-y-1 text-xs md:text-sm pl-2">
-                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'web')" :key="i" class="py-1" :id="'source-' + (i + 1)">
-                        <span class="font-medium text-blue-700">{{ source.match(/^\[\d+\]/) ? source.match(/^\[\d+\]/)[0] : '' }}</span>
-                        <a v-if="isValidUrl(source)" :href="extractUrl(source)" target="_blank" rel="noopener noreferrer" 
-                           class="text-blue-600 hover:text-blue-800 hover:underline inline-block">
-                          {{ formatSource(source).title || formatSource(source).url }}
-                        </a>
-                        <span v-else>{{ source.replace(/^\[\d+\]/, '').trim() }}</span>
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'web')" :key="i" class="py-1">
+                        <div v-if="source === 'No web sources available.'" class="text-gray-500 italic">
+                          {{ source }}
+                        </div>
+                        <div v-else class="flex items-start">
+                          <span class="reference-number mr-2 shrink-0">{{ source.match(/^\[\d+\]/) ? source.match(/^\[\d+\]/)[0] : '' }}</span>
+                          <span class="flex-1">
+                            <a v-if="isValidUrl(source)" :href="extractUrl(source)" target="_blank" rel="noopener noreferrer" 
+                               class="text-blue-600 hover:text-blue-800 hover:underline inline-block">
+                              {{ formatSource(source).title || formatSource(source).url }}
+                            </a>
+                            <span v-else>{{ source.replace(/^\[\d+\]/, '').trim() }}</span>
+                          </span>
+                        </div>
                       </li>
                     </ul>
                   </div>
@@ -102,8 +109,8 @@
                   </button>
                   <div v-show="isSourceTypeExpanded(message.id, 'image')" class="px-3 py-2 border-t text-xs md:text-sm">
                     <ul class="space-y-1 text-xs md:text-sm pl-2">
-                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'image')" :key="i" class="py-1" :id="'source-' + (i + 1)">
-                        <span class="font-medium text-purple-700">{{ source.match(/^\[I\d+\]/) ? source.match(/^\[I\d+\]/)[0] : '' }}</span>
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'image')" :key="i" class="py-1">
+                        <span class="image-reference-number">{{ source.match(/^\[I\d+\]/) ? source.match(/^\[I\d+\]/)[0] : '' }}</span>
                         <a v-if="isValidUrl(source)" :href="extractUrl(source)" target="_blank" rel="noopener noreferrer" 
                            class="text-blue-600 hover:text-blue-800 hover:underline inline-block">
                           {{ formatSource(source).title || formatSource(source).url }}
@@ -132,11 +139,11 @@
                   </button>
                   <div v-show="isSourceTypeExpanded(message.id, 'vector')" class="px-3 py-2 border-t text-xs md:text-sm">
                     <ul class="space-y-3 text-xs md:text-sm pl-2">
-                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'vector')" :key="i" class="py-1 text-gray-700 whitespace-pre-line" :id="'source-' + (i + 1)">
+                      <li v-for="(source, i) in getSourcesIfExpanded(message.content, 'vector')" :key="i" class="py-1 text-gray-700 whitespace-pre-line">
                         <div v-if="source === 'No vector sources available.'">{{ source }}</div>
                         <div v-else>
                           <div>
-                            <span class="font-medium text-teal-700">{{ source.match(/^\[V\d+\]/) ? source.match(/^\[V\d+\]/)[0] : '' }}</span>
+                            <span class="vector-reference-number">{{ source.match(/^\[V\d+\]/) ? source.match(/^\[V\d+\]/)[0] : '' }}</span>
                             <span class="font-medium">{{ source.replace(/^\[V\d+\]/, '').split('\nText excerpt:')[0].trim() }}</span>
                           </div>
                           <div class="mt-1 pl-4 text-gray-600 text-xs border-l-2 border-gray-200">
@@ -423,7 +430,76 @@ const getSourcesIfExpanded = (content, type) => {
     return entries;
   }
   
-  return match[1].trim().split('\n').filter(line => line.trim())
+  // Handle web sources and ensure proper numbering
+  if (type === 'web') {
+    // Ensure we get clean content without the tags
+    const webContent = match[1].trim();
+    
+    // Handle empty or "No web sources available"
+    if (!webContent || webContent === "No web sources available.") {
+      return ["No web sources available."];
+    }
+    
+    // Split by lines and clean up
+    const rawSources = webContent.split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+    
+    // Check if we need to renumber or if the sources are malformed
+    let needsFixing = false;
+    
+    // Look for visible tag issue or any other formatting problem
+    if (webContent.includes("<websources>") || webContent.includes("</websources>")) {
+      needsFixing = true;
+    }
+    
+    // Check for numbering issues
+    const sourcesWithNumbers = rawSources.map((source, index) => {
+      const numMatch = source.match(/^\[(\d+)\]/);
+      if (!numMatch || parseInt(numMatch[1]) !== index + 1) {
+        needsFixing = true;
+      }
+      return { source, index };
+    });
+    
+    if (needsFixing) {
+      // Rebuild the sources with proper numbering
+      return rawSources.map((source, index) => {
+        // Strip any existing numbering
+        const cleanSource = source.replace(/^\[\d+\]\s*/, '');
+        // Add proper numbering
+        return `[${index + 1}] ${cleanSource}`;
+      });
+    }
+    
+    return rawSources;
+  }
+  
+  // Handle image sources and ensure proper numbering
+  if (type === 'image') {
+    const rawSources = match[1].trim().split('\n').filter(line => line.trim());
+    
+    // Check if sources need renumbering
+    const needsRenumbering = rawSources.some((source, index) => {
+      const numbering = source.match(/^\[I(\d+)\]/);
+      return !numbering || parseInt(numbering[1]) !== index + 1;
+    });
+    
+    if (needsRenumbering) {
+      return rawSources.map((source, index) => {
+        const oldNumberMatch = source.match(/^\[I(\d+)\]/);
+        if (oldNumberMatch) {
+          // Replace old number with new number
+          return source.replace(/^\[I\d+\]/, `[I${index + 1}]`);
+        }
+        return `[I${index + 1}] ${source}`;
+      });
+    }
+    
+    return rawSources;
+  }
+  
+  return match[1].trim().split('\n').filter(line => line.trim());
 }
 
 // Count sources by type
@@ -505,10 +581,20 @@ const getProcessedContent = (message) => {
     return contentCache.get(cacheKey)
   }
   
-  // Extract source sections for reference links
-  const webSources = getSourcesIfExpanded(message.content, 'web')
-  const imageSources = getSourcesIfExpanded(message.content, 'image')
-  const vectorSources = getSourcesIfExpanded(message.content, 'vector')
+  // Extract web source URLs for reference linking
+  const webSourceUrls = {};
+  const websourcesMatch = message.content.match(/<websources>([\s\S]*?)<\/websources>/s);
+  if (websourcesMatch && websourcesMatch[1].trim()) {
+    const webSourceLines = websourcesMatch[1].trim().split('\n');
+    webSourceLines.forEach(line => {
+      // Extract citation number and URL
+      const citationMatch = line.match(/^\[(\d+)\]/);
+      const urlMatch = line.match(/https?:\/\/[^\s]+/);
+      if (citationMatch && urlMatch) {
+        webSourceUrls[citationMatch[1]] = urlMatch[0];
+      }
+    });
+  }
   
   // Remove source sections from display
   const cleanContent = message.content
@@ -519,77 +605,99 @@ const getProcessedContent = (message) => {
   // Render markdown
   let rendered = DOMPurify.sanitize(md.render(cleanContent))
   
-  // Create a temporary div to manipulate the content
-  const tempDiv = document.createElement('div')
-  tempDiv.innerHTML = rendered
-  
-  // Convert reference numbers to clickable links
-  const convertReferencesToLinks = (element) => {
-    const textNodes = []
-    const walker = document.createTreeWalker(
-      element,
-      NodeFilter.SHOW_TEXT,
-      null,
-      false
-    )
+  // Add clickable links to citation references
+  if (Object.keys(webSourceUrls).length > 0) {
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = rendered
     
-    let node
-    while (node = walker.nextNode()) {
-      textNodes.push(node)
-    }
+    // Regular expression to find citation references [1], [2], etc.
+    const citationRegex = /\[(\d+)\]/g
     
-    textNodes.forEach(node => {
+    // Process all text nodes to find and replace citations
+    const processTextNode = (node) => {
       const text = node.textContent
-      // Match [1], [2], etc. but not within code blocks
-      const regex = /\[(\d+)\]/g
-      let match
-      let lastIndex = 0
-      const fragment = document.createDocumentFragment()
+      const citationMatches = Array.from(text.matchAll(citationRegex))
       
-      while ((match = regex.exec(text)) !== null) {
-        // Add text before the match
-        if (match.index > lastIndex) {
-          fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)))
-        }
+      if (citationMatches.length > 0) {
+        // Create a document fragment to hold the new content
+        const fragment = document.createDocumentFragment()
+        let lastIndex = 0
         
-        // Create the link
-        const link = document.createElement('a')
-        link.href = `#source-${match[1]}`
-        link.className = 'text-blue-600 hover:text-blue-800 hover:underline cursor-pointer'
-        link.textContent = match[0]
-        link.onclick = (e) => {
-          e.preventDefault()
-          const target = document.getElementById(`source-${match[1]}`)
-          if (target) {
-            target.scrollIntoView({ behavior: 'smooth' })
-            // Add highlight effect
-            target.classList.add('bg-blue-50')
-            setTimeout(() => target.classList.remove('bg-blue-50'), 2000)
+        for (const match of citationMatches) {
+          const citationNumber = match[1]
+          const url = webSourceUrls[citationNumber]
+          
+          if (url) {
+            // Add text before the citation
+            if (match.index > lastIndex) {
+              fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.index)))
+            }
+            
+            // Create a link for the citation
+            const link = document.createElement('a')
+            link.href = url
+            link.className = 'citation-link text-blue-600 hover:underline'
+            link.setAttribute('target', '_blank')
+            link.setAttribute('rel', 'noopener noreferrer')
+            link.textContent = `[${citationNumber}]`
+            link.title = `View reference ${citationNumber}`
+            
+            fragment.appendChild(link)
+            lastIndex = match.index + match[0].length
           }
         }
-        fragment.appendChild(link)
         
-        lastIndex = match.index + match[0].length
+        // Add any remaining text
+        if (lastIndex < text.length) {
+          fragment.appendChild(document.createTextNode(text.substring(lastIndex)))
+        }
+        
+        // Replace the original text node with the fragment
+        if (fragment.childNodes.length > 0) {
+          node.parentNode.replaceChild(fragment, node)
+          return true
+        }
       }
       
-      // Add remaining text
-      if (lastIndex < text.length) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex)))
+      return false
+    }
+    
+    // Recursively process all text nodes in the document
+    const processNode = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return processTextNode(node)
       }
       
-      // Replace the text node with the fragment
-      node.parentNode.replaceChild(fragment, node)
-    })
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        // Skip processing within pre, code, or a tags
+        if (node.nodeName === 'PRE' || node.nodeName === 'CODE' || node.nodeName === 'A') {
+          return false
+        }
+        
+        // Process all child nodes
+        const childNodes = Array.from(node.childNodes)
+        let modified = false
+        
+        for (const child of childNodes) {
+          modified = processNode(child) || modified
+        }
+        
+        return modified
+      }
+      
+      return false
+    }
+    
+    processNode(tempDiv)
+    rendered = tempDiv.innerHTML
   }
-  
-  // Apply to all text nodes except those within code blocks
-  const elements = tempDiv.querySelectorAll('*:not(pre):not(code)')
-  elements.forEach(element => {
-    convertReferencesToLinks(element)
-  })
   
   // Hide images if includeImages is false or in concise mode
   if (!effectiveImageSetting) {
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = rendered
+    
+    // Find all images and replace them with placeholders
     const images = tempDiv.querySelectorAll('img')
     images.forEach(img => {
       const imgPlaceholder = document.createElement('div')
@@ -599,9 +707,9 @@ const getProcessedContent = (message) => {
         '🖼️ Image hidden (toggle images to view)'
       img.parentNode.replaceChild(imgPlaceholder, img)
     })
+    
+    rendered = tempDiv.innerHTML
   }
-  
-  rendered = tempDiv.innerHTML
   
   // Cache the result
   contentCache.set(cacheKey, rendered)
@@ -853,5 +961,34 @@ img {
 /* Make images within prose clickable */
 .prose img {
   @apply cursor-pointer;
+}
+
+.prose a.citation-link {
+  @apply bg-blue-50 rounded px-1.5 py-0.5 text-blue-600 font-medium hover:bg-blue-100 transition-colors border border-blue-100;
+  text-decoration: none;
+  margin: 0 1px;
+}
+
+.prose a.citation-link:hover {
+  text-decoration: none;
+}
+
+/* Enhance reference number styling */
+.reference-number {
+  @apply bg-blue-50 px-1.5 py-0.5 rounded-md text-blue-700 font-medium border border-blue-100 inline-block;
+  min-width: 2.5rem;
+  text-align: center;
+}
+
+.image-reference-number {
+  @apply bg-purple-50 px-1.5 py-0.5 rounded-md text-purple-700 font-medium border border-purple-100 inline-block;
+  min-width: 3rem;
+  text-align: center;
+}
+
+.vector-reference-number {
+  @apply bg-teal-50 px-1.5 py-0.5 rounded-md text-teal-700 font-medium border border-teal-100 inline-block;
+  min-width: 3rem;
+  text-align: center;
 }
 </style>

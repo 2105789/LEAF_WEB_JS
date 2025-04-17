@@ -9,16 +9,9 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf"
 import axios from 'axios'
-import leafConfig from '../config/leaf-config.json'
-import { GoogleGenerativeAI } from '@google/generative-ai'
-import { GoogleGenerativeAIStream, StreamingTextResponse } from 'ai'
-import { getToken } from 'next-auth/jwt'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '../auth/[...nextauth]'
-import { useRuntimeConfig } from '#imports'
 
 const prisma = new PrismaClient()
-const runtimeConfig = useRuntimeConfig()
+const config = useRuntimeConfig()
 
 // Model configurations
 const MODEL_CONFIG = {
@@ -42,15 +35,12 @@ let tavilyClient = null
 // In-memory cache for active conversations
 const conversationCache = new Map()
 
-// Cache for vector search results
+// In-memory cache for vector search results by threadId
 const vectorResultsCache = new Map()
 
-// Cache for web sources
-const webSourcesGlobalCache = new Map()
-
 // Qdrant client configuration
-const QDRANT_URL = runtimeConfig.qdrantUrl
-const QDRANT_API_KEY = runtimeConfig.qdrantApiKey
+const QDRANT_URL = config.qdrantUrl
+const QDRANT_API_KEY = config.qdrantApiKey
 const COLLECTION_NAME = "leaf_data_v2"
 
 const qdrantClient = new QdrantClient({
@@ -298,7 +288,7 @@ Return ONLY the category name, nothing else. No explanations.`
 // Function to extract and format sources from search results
 function extractSourcesFromTavily(searchResults) {
   if (!searchResults || !searchResults.results || !Array.isArray(searchResults.results)) {
-    console.error("[TAVILY] Invalid search results structure", searchResults)
+    console.error("[TAVILY] Invalid search results structure")
     return { webSources: [], imageSources: [] }
   }
 
@@ -306,189 +296,144 @@ function extractSourcesFromTavily(searchResults) {
   const extractDateIndicators = (text) => {
     if (!text) return null;
     
-    try {
-      // Look for year-month patterns (2024-10, 2023-03, etc.)
-      const yearMonthPattern = /\b(20\d\d)[-\/](\d\d)\b/;
-      // Look for month-year patterns (April-June 2024, Jan 2023, etc.)
-      const monthYearPattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](\d{4})\b/i;
-      // Look for quarter patterns (Q1 2024, Q4 2023, etc.)
-      const quarterPattern = /\bQ[1-4][-\s](20\d\d)\b/i;
-      // Look for period patterns (April-June 2024, Jan-Mar 2023, etc.)
-      const periodPattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](to|through|thru|[-])[-\s]?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](20\d\d)\b/i;
-      
-      // Try to match each pattern
-      const yearMonthMatch = text.match(yearMonthPattern);
-      const monthYearMatch = text.match(monthYearPattern);
-      const quarterMatch = text.match(quarterPattern);
-      const periodMatch = text.match(periodPattern);
-      
-      // Return the first match found, with priority
-      if (yearMonthMatch) return { year: yearMonthMatch[1], month: yearMonthMatch[2], text: yearMonthMatch[0] };
-      if (monthYearMatch) return { year: monthYearMatch[2], month: monthYearMatch[1], text: monthYearMatch[0] };
-      if (quarterMatch) return { year: quarterMatch[1], quarter: true, text: quarterMatch[0] };
-      if (periodMatch) return { year: periodMatch[4], period: true, text: periodMatch[0] };
-      
-      // Look for just year as a fallback
-      const yearMatch = text.match(/\b(20\d\d)\b/);
-      if (yearMatch) return { year: yearMatch[1], text: yearMatch[0] };
-    } catch (err) {
-      console.error("[TAVILY] Error extracting date indicators:", err);
-    }
+    // Look for year-month patterns (2024-10, 2023-03, etc.)
+    const yearMonthPattern = /\b(20\d\d)[-\/](\d\d)\b/;
+    // Look for month-year patterns (April-June 2024, Jan 2023, etc.)
+    const monthYearPattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](\d{4})\b/i;
+    // Look for quarter patterns (Q1 2024, Q4 2023, etc.)
+    const quarterPattern = /\bQ[1-4][-\s](20\d\d)\b/i;
+    // Look for period patterns (April-June 2024, Jan-Mar 2023, etc.)
+    const periodPattern = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](to|through|thru|[-])[-\s]?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[-\s](20\d\d)\b/i;
+    
+    // Try to match each pattern
+    const yearMonthMatch = text.match(yearMonthPattern);
+    const monthYearMatch = text.match(monthYearPattern);
+    const quarterMatch = text.match(quarterPattern);
+    const periodMatch = text.match(periodPattern);
+    
+    // Return the first match found, with priority
+    if (yearMonthMatch) return { year: yearMonthMatch[1], month: yearMonthMatch[2], text: yearMonthMatch[0] };
+    if (monthYearMatch) return { year: monthYearMatch[2], month: monthYearMatch[1], text: monthYearMatch[0] };
+    if (quarterMatch) return { year: quarterMatch[1], quarter: true, text: quarterMatch[0] };
+    if (periodMatch) return { year: periodMatch[4], period: true, text: periodMatch[0] };
+    
+    // Look for just year as a fallback
+    const yearMatch = text.match(/\b(20\d\d)\b/);
+    if (yearMatch) return { year: yearMatch[1], text: yearMatch[0] };
     
     return null;
   };
   
   // Score recency based on date indicators
   const scoreRecency = (result) => {
-    try {
-      // Check title, URL and content for date indicators
-      const titleDate = extractDateIndicators(result.title);
-      const urlDate = extractDateIndicators(result.url);
-      const contentDate = extractDateIndicators(result.content);
-      
-      // Use the most specific date found (prioritize content, then title, then URL)
-      const dateInfo = contentDate || titleDate || urlDate;
-      
-      if (!dateInfo) {
-        return 0;
-      }
-      
-      // Calculate recency score - higher for more recent dates
-      const currentYear = new Date().getFullYear();
-      const yearDiff = currentYear - parseInt(dateInfo.year);
-      
-      // Base score on how recent the year is
-      let recencyScore = 100 - (yearDiff * 30);
-      
-      // If we have month info, refine the score further
-      if (dateInfo.month) {
-        const currentMonth = new Date().getMonth() + 1; // 1-12
-        
-        // Convert month name to number if necessary
-        let monthNum = dateInfo.month;
-        if (isNaN(monthNum)) {
-          const monthNames = {
-            "jan": 1, "january": 1,
-            "feb": 2, "february": 2,
-            "mar": 3, "march": 3,
-            "apr": 4, "april": 4,
-            "may": 5,
-            "jun": 6, "june": 6,
-            "jul": 7, "july": 7,
-            "aug": 8, "august": 8,
-            "sep": 9, "september": 9,
-            "oct": 10, "october": 10,
-            "nov": 11, "november": 11,
-            "dec": 12, "december": 12
-          };
-          monthNum = monthNames[dateInfo.month.toLowerCase()] || 1;
-        }
-        
-        // If same year, refine by month
-        if (yearDiff === 0) {
-          recencyScore = 100 - ((currentMonth - monthNum) * 2); // Deduct 2 points per month older
-        }
-      }
-      
-      // Cap score between 0 and 100
-      recencyScore = Math.max(0, Math.min(100, recencyScore));
-      
-      return recencyScore;
-    } catch (err) {
-      console.error("[TAVILY] Error calculating recency score:", err);
+    // Check title, URL and content for date indicators
+    const titleDate = extractDateIndicators(result.title);
+    const urlDate = extractDateIndicators(result.url);
+    const contentDate = extractDateIndicators(result.content);
+    
+    //console.log(`[TAVILY] Recency scoring for result: "${result.title.substring(0, 30)}..."`);
+    //console.log(`[TAVILY] Date from title: ${titleDate ? JSON.stringify(titleDate) : 'None'}`);
+    //console.log(`[TAVILY] Date from URL: ${urlDate ? JSON.stringify(urlDate) : 'None'}`);
+    //console.log(`[TAVILY] Date from content: ${contentDate ? JSON.stringify(contentDate) : 'None'}`);
+    
+    // Use the most specific date found (prioritize content, then title, then URL)
+    const dateInfo = contentDate || titleDate || urlDate;
+    
+    if (!dateInfo) {
+      //console.log(`[TAVILY] No date information found, setting recency score to 0`);
       return 0;
     }
-  };
-
-  try {
-    // Add recency score to results
-    const scoredResults = searchResults.results.map(result => ({
-      ...result,
-      recencyScore: scoreRecency(result)
-    }));
     
-    // Sort by recency score (higher first) then by original score
-    const sortedResults = scoredResults.sort((a, b) => {
-      // If recency scores differ significantly, prioritize recency
-      if (Math.abs(a.recencyScore - b.recencyScore) > 20) {
-        return b.recencyScore - a.recencyScore;
+    // Calculate recency score - higher for more recent dates
+    const currentYear = new Date().getFullYear();
+    const yearDiff = currentYear - parseInt(dateInfo.year);
+    
+    // Base score on how recent the year is
+    let recencyScore = 100 - (yearDiff * 30); // Deduct 30 points per year older
+    
+    // If we have month info, refine the score further
+    if (dateInfo.month) {
+      const currentMonth = new Date().getMonth() + 1; // 1-12
+      
+      // Convert month name to number if necessary
+      let monthNum = dateInfo.month;
+      if (isNaN(monthNum)) {
+        const monthNames = {
+          "jan": 1, "january": 1,
+          "feb": 2, "february": 2,
+          "mar": 3, "march": 3,
+          "apr": 4, "april": 4,
+          "may": 5,
+          "jun": 6, "june": 6,
+          "jul": 7, "july": 7,
+          "aug": 8, "august": 8,
+          "sep": 9, "september": 9,
+          "oct": 10, "october": 10,
+          "nov": 11, "november": 11,
+          "dec": 12, "december": 12
+        };
+        monthNum = monthNames[dateInfo.month.toLowerCase()] || 1;
       }
-      // Otherwise, use original score
-      return b.score - a.score;
-    });
-    
-    // Deduplicate results by URL while preserving order
-    const uniqueUrls = new Set();
-    const uniqueResults = [];
-  
-    for (const result of sortedResults) {
-      if (result.url && !uniqueUrls.has(result.url)) {
-        uniqueUrls.add(result.url);
-        uniqueResults.push(result);
+      
+      // If same year, refine by month
+      if (yearDiff === 0) {
+        recencyScore = 100 - ((currentMonth - monthNum) * 2); // Deduct 2 points per month older
       }
     }
-  
-    // Format web sources with proper structure
-    const webSources = uniqueResults.map((result, index) => {
-      try {
-        // Extract date information
-        const dateInfo = extractDateIndicators(result.content) || 
-                        extractDateIndicators(result.title) || 
-                        extractDateIndicators(result.url);
-        
-        // Format the source entry
-        const sourceEntry = {
-          index: index + 1,
-          title: result.title || "Untitled Source",
-          url: result.url || "",
-          content: [result.rawContent, result.content, result.content_snippet]
-            .find(content => typeof content === 'string') || "",
-          recencyScore: result.recencyScore,
-          dateInfo: dateInfo ? dateInfo.text : null
-        };
     
-        return sourceEntry;
-      } catch (err) {
-        console.error("[TAVILY] Error formatting web source:", err);
-        // Return a minimal valid source entry
-        return {
-          index: index + 1,
-          title: result.title || "Untitled Source",
-          url: result.url || "",
-          content: "",
-          recencyScore: 0,
-          dateInfo: null
-        };
-      }
-    });
+    // Cap score between 0 and 100
+    recencyScore = Math.max(0, Math.min(100, recencyScore));
+    console.log(`[TAVILY] Final recency score: ${recencyScore} for date: ${dateInfo.text}`);
+    
+    return recencyScore;
+  };
+
+  // Add recency score to results
+  const scoredResults = searchResults.results.map(result => ({
+    ...result,
+    recencyScore: scoreRecency(result)
+  }));
   
-    // Format image sources
-    const imageSources = (searchResults.images || []).map((img, index) => {
-      try {
-        return {
-          index: index + 1,
-          url: img.url || "",
-          description: img.description || `Image related to query`,
-          sourceUrl: img.source_url || ""
-        };
-      } catch (err) {
-        console.error("[TAVILY] Error formatting image source:", err);
-        // Return a minimal valid image source
-        return {
-          index: index + 1,
-          url: "",
-          description: "Image (error parsing metadata)",
-          sourceUrl: ""
-        };
-      }
-    });
+  // Sort by recency score (higher first) then by original score
+  const sortedResults = scoredResults.sort((a, b) => {
+    // If recency scores differ significantly, prioritize recency
+    if (Math.abs(a.recencyScore - b.recencyScore) > 20) {
+      //console.log(`[TAVILY] Sorting by recency: "${a.title.substring(0, 30)}..." (${a.recencyScore}) vs "${b.title.substring(0, 30)}..." (${b.recencyScore})`);
+      return b.recencyScore - a.recencyScore;
+    }
+    // Otherwise, use original score
+    //console.log(`[TAVILY] Sorting by original score: "${a.title.substring(0, 30)}..." (${a.score}) vs "${b.title.substring(0, 30)}..." (${b.score})`);
+    return b.score - a.score;
+  });
   
-    console.log(`[TAVILY] Successfully processed ${webSources.length} web sources and ${imageSources.length} image sources`);
-    return { webSources, imageSources };
-  } catch (err) {
-    console.error("[TAVILY] Critical error in extractSourcesFromTavily:", err);
-    return { webSources: [], imageSources: [] };
+  // Deduplicate results by URL while preserving order
+  const uniqueUrls = new Set();
+  const uniqueResults = [];
+
+  for (const result of sortedResults) {
+    if (result.url && !uniqueUrls.has(result.url)) {
+      uniqueUrls.add(result.url);
+      uniqueResults.push(result);
+    }
   }
+
+  const webSources = uniqueResults.map((result, index) => ({
+    index: index + 1,
+    title: result.title || "Untitled Source",
+    url: result.url || "",
+    content: [result.rawContent, result.content, result.content_snippet]
+      .find(content => typeof content === 'string') || "",
+    recencyScore: result.recencyScore
+  }));
+
+  const imageSources = (searchResults.images || []).map((img, index) => ({
+    index: index + 1,
+    url: img.url || "",
+    description: img.description || `Image related to query`,
+    sourceUrl: img.source_url || ""
+  }));
+
+  return { webSources, imageSources };
 }
 
 // Helper function to validate PDF data
@@ -538,140 +483,322 @@ function ensureProperSourceBlocks(response, threadId) {
   // First clean the response
   let cleaned = cleanMarkdownResponse(response);
   
-  console.log('[SOURCE_BLOCKS] Ensuring proper source blocks formatting');
-  
   // Check if source blocks are properly formatted
   const hasWebsources = cleaned.includes('<websources>') && cleaned.includes('</websources>');
   const hasImagesources = cleaned.includes('<imagesources>') && cleaned.includes('</imagesources>');
   const hasVectorsources = cleaned.includes('<vectorsources>') && cleaned.includes('</vectorsources>');
   
-  // If all source blocks are present and properly formatted, return as is
-  if (hasWebsources && hasImagesources && hasVectorsources) {
-    console.log('[SOURCE_BLOCKS] Source blocks are properly formatted');
-    return cleaned;
+  // Extract all web source URLs for adding links to citations if needed
+  let webSourceUrls = {};
+  const websourcesMatch = cleaned.match(/<websources>([\s\S]*?)<\/websources>/m);
+  if (websourcesMatch && websourcesMatch[1].trim()) {
+    const webSourceLines = websourcesMatch[1].trim().split('\n');
+    webSourceLines.forEach(line => {
+      // Extract citation number and URL
+      const citationMatch = line.match(/^\[(\d+)\]/);
+      const urlMatch = line.match(/https?:\/\/[^\s]+/);
+      if (citationMatch && urlMatch) {
+        webSourceUrls[citationMatch[1]] = urlMatch[0];
+      }
+    });
   }
   
-  console.log('[SOURCE_BLOCKS] Some source blocks missing or improperly formatted');
+  // Ensure that there's a complete references section if none exists
+  if (!hasWebsources || !hasImagesources || !hasVectorsources) {
+    console.log('[SOURCE_BLOCKS] Missing one or more source blocks, rebuilding references section');
+    
+    // Create a proper References section if it doesn't exist
+    if (!cleaned.match(/##\s*References/i)) {
+      console.log('[SOURCE_BLOCKS] No References section found, adding one');
+      cleaned += '\n\n## References\n\n';
+    }
   
   // Extract the references section (everything after "## References" or similar)
   const referencesSectionMatch = cleaned.match(/##\s*References[^#]*$/i);
   
   if (!referencesSectionMatch) {
-    console.log('[SOURCE_BLOCKS] No references section found, adding one');
-    // If no references section found, add one
-    cleaned += '\n\n## References\n';
-    // Get the web sources from cache if available
-    const webSourcesCache = webSourcesGlobalCache.get(threadId) || [];
-    
-    // Format source blocks
-    let sourceBlocks = "\n\n";
-    
-    // Add web sources block
-    if (webSourcesCache.length > 0) {
-      const formattedWebSources = webSourcesCache.map((source, idx) => 
-        `[${idx + 1}] ${source.title || 'Untitled Source'} - ${source.url || 'No URL'}`
-      ).join('\n');
-      sourceBlocks += "<websources>\n" + formattedWebSources + "\n</websources>\n\n";
-    } else {
-      sourceBlocks += "<websources>\n</websources>\n\n";
-    }
-    
-    // Add empty image sources and vector sources blocks
-    sourceBlocks += "<imagesources>\n</imagesources>\n\n";
-    sourceBlocks += "<vectorsources>\nNo vector sources available.\n</vectorsources>\n";
-    
-    return cleaned + sourceBlocks;
+      console.log('[SOURCE_BLOCKS] Failed to locate References section after adding it, this is unexpected');
+      // Add a new references section as a fallback
+      cleaned += '\n\n## References\n\n';
   }
   
   // Split the response into content and references
-  const contentPart = cleaned.substring(0, referencesSectionMatch.index);
-  let refPart = referencesSectionMatch[0];
-  
-  // Extract source blocks if they exist but are improperly formatted
-  const websourcesMatch = refPart.match(/.*?<websources>([\s\S]*?)<\/websources>/m);
-  const imagesourcesMatch = refPart.match(/.*?<imagesources>([\s\S]*?)<\/imagesources>/m);
-  const vectorsourcesMatch = refPart.match(/.*?<vectorsources>([\s\S]*?)<\/vectorsources>/m);
-  
-  // Format the source blocks properly
+    const contentPart = cleaned.includes('## References') ? 
+      cleaned.substring(0, cleaned.indexOf('## References')) : cleaned;
+    
+    // Build completely new source blocks with proper tags
   let sourceBlocks = "\n\n";
   
-  if (websourcesMatch) {
-    console.log('[SOURCE_BLOCKS] Found websources, validating...');
-    // Deduplicate websources if needed
-    const webSourcesContent = websourcesMatch[1].trim();
-    // Check for URL patterns
-    const urls = new Set();
-    const uniqueLines = [];
-    
-    webSourcesContent.split('\n').forEach(line => {
-      const urlMatch = line.match(/https?:\/\/[^\s)]+/);
-      if (urlMatch && urlMatch[0]) {
-        const url = urlMatch[0];
-        if (!urls.has(url)) {
-          urls.add(url);
-          uniqueLines.push(line);
-        }
-      } else {
-        // If no URL found, keep the line
-        uniqueLines.push(line);
+    // Try to extract any existing web sources
+    let webSourcesContent = '';
+    if (websourcesMatch && websourcesMatch[1].trim()) {
+      webSourcesContent = websourcesMatch[1].trim();
+    } else {
+      // Look for numbered references in markdown format outside of tags
+      const refRegex = /\[\d+\]\s+.+(?:http|www\.)\S+/g;
+      const foundRefs = cleaned.match(refRegex);
+      if (foundRefs && foundRefs.length > 0) {
+        console.log('[SOURCE_BLOCKS] Found references outside of tags:', foundRefs.length);
+        webSourcesContent = foundRefs.join('\n');
       }
-    });
-    
-    // If we found and removed duplicates, reindex the references
-    if (uniqueLines.length < webSourcesContent.split('\n').length) {
-      console.log('[SOURCE_BLOCKS] Deduplicating and reindexing websources');
-      const reindexedLines = uniqueLines.map((line, idx) => {
-        return line.replace(/^\[\d+\]/, `[${idx + 1}]`);
-      });
-      sourceBlocks += "<websources>\n" + reindexedLines.join('\n') + "\n</websources>\n\n";
-    } else {
-      sourceBlocks += "<websources>\n" + webSourcesContent + "\n</websources>\n\n";
     }
-  } else {
-    console.log('[SOURCE_BLOCKS] No websources found, checking cache');
-    // Try to get web sources from cache
-    const webSourcesCache = webSourcesGlobalCache.get(threadId) || [];
-    console.log('[SOURCE_BLOCKS] Web sources from cache:', webSourcesCache.length);
     
-    if (webSourcesCache.length > 0) {
-      console.log('[SOURCE_BLOCKS] Creating websources from cache');
-      // Create websources block with cached sources
-      const formattedWebSources = webSourcesCache.map((source, idx) => 
-        `[${idx + 1}] ${source.title || 'Untitled Source'} - ${source.url || 'No URL'}`
-      ).join('\n');
-      sourceBlocks += "<websources>\n" + formattedWebSources + "\n</websources>\n\n";
+    // Ensure web sources aren't empty - if they are, try to scan for URLs in the text
+    if (!webSourcesContent || webSourcesContent.trim() === '') {
+      console.log('[SOURCE_BLOCKS] Web sources are empty, scanning text for URLs');
+      const urlRegex = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
+      const foundUrls = [];
+      let match;
+      let index = 1;
+      
+      while ((match = urlRegex.exec(cleaned)) !== null) {
+        const title = match[1];
+        const url = match[2];
+        // Deduplicate by URL
+        if (!foundUrls.some(item => item.url === url)) {
+          foundUrls.push({ index, title, url });
+          index++;
+        }
+      }
+      
+      if (foundUrls.length > 0) {
+        console.log('[SOURCE_BLOCKS] Found URLs in text links:', foundUrls.length);
+        webSourcesContent = foundUrls.map(item => `[${item.index}] ${item.title} - ${item.url}`).join('\n');
     } else {
-      // Add empty websources block if missing
-      sourceBlocks += "<websources>\n</websources>\n\n";
+        console.log('[SOURCE_BLOCKS] No URLs found in text links');
+        // Still empty, check for literal http URLs in text
+        const directUrlRegex = /(https?:\/\/[^\s\)]+)/g;
+        const directUrls = [];
+        let urlMatch;
+        let urlIndex = 1;
+        
+        while ((urlMatch = directUrlRegex.exec(cleaned)) !== null) {
+          const url = urlMatch[1];
+          // Deduplicate
+          if (!directUrls.some(item => item === url)) {
+            directUrls.push(url);
+            urlIndex++;
+          }
+        }
+        
+        if (directUrls.length > 0) {
+          console.log('[SOURCE_BLOCKS] Found direct URLs in text:', directUrls.length);
+          webSourcesContent = directUrls.map((url, idx) => `[${idx + 1}] Reference - ${url}`).join('\n');
+        }
+      }
     }
-  }
-  
-  if (imagesourcesMatch) {
-    sourceBlocks += "<imagesources>\n" + imagesourcesMatch[1].trim() + "\n</imagesources>\n\n";
+    
+    // Add web sources block
+    sourceBlocks += "<websources>\n" + (webSourcesContent || "No web sources available.") + "\n</websources>\n\n";
+    
+    // Try to extract any existing image sources
+    let imageSourcesContent = '';
+    const imagesourcesMatch = cleaned.match(/<imagesources>([\s\S]*?)<\/imagesources>/m);
+    if (imagesourcesMatch && imagesourcesMatch[1].trim()) {
+      imageSourcesContent = imagesourcesMatch[1].trim();
   } else {
-    // Add empty imagesources block if missing
-    sourceBlocks += "<imagesources>\n</imagesources>\n\n";
-  }
-  
-  if (vectorsourcesMatch) {
-    sourceBlocks += "<vectorsources>\n" + vectorsourcesMatch[1].trim() + "\n</vectorsources>\n";
+      // Look for image links in markdown format
+      const imgRegex = /!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g;
+      const foundImgs = [];
+      let imgMatch;
+      let imgIndex = 1;
+      
+      while ((imgMatch = imgRegex.exec(cleaned)) !== null) {
+        const description = imgMatch[1] || 'Image';
+        const url = imgMatch[2];
+        // Deduplicate by URL
+        if (!foundImgs.some(item => item.url === url)) {
+          foundImgs.push({ index: imgIndex, description, url });
+          imgIndex++;
+        }
+      }
+      
+      if (foundImgs.length > 0) {
+        console.log('[SOURCE_BLOCKS] Found images in markdown:', foundImgs.length);
+        imageSourcesContent = foundImgs.map(item => `[I${item.index}] ${item.description} - ${item.url}`).join('\n');
+      }
+    }
+    
+    // Add image sources block
+    sourceBlocks += "<imagesources>\n" + (imageSourcesContent || "No image sources available.") + "\n</imagesources>\n\n";
+    
+    // Try to extract any existing vector sources
+    let vectorSourcesContent = '';
+    const vectorsourcesMatch = cleaned.match(/<vectorsources>([\s\S]*?)<\/vectorsources>/m);
+    if (vectorsourcesMatch && vectorsourcesMatch[1].trim()) {
+      vectorSourcesContent = vectorsourcesMatch[1].trim();
   } else {
     // Try to get vector results from cache
     const vectorResults = vectorResultsCache.get(threadId) || [];
     console.log("[SOURCE_BLOCKS] Creating vector sources from cache. Results:", vectorResults.length);
     
     // Create vector sources block with text excerpts
-    const vectorReferences = vectorResults.length > 0 ? 
-      vectorResults.map((s, idx) => 
+      if (vectorResults.length > 0) {
+        vectorSourcesContent = vectorResults.map((s, idx) => 
         `[V${idx + 1}] ${s.source || 'Unknown Source'} - Chunk ${s.chunkIndex || 'N/A'} - ${s.filePath || 'Unknown Path'}
 Text excerpt: "${(s.text || '').substring(0, 300)}${(s.text || '').length > 300 ? '...' : ''}"`
-      ).join('\n\n') : 'No vector sources available.';
+        ).join('\n\n');
+      } else {
+        vectorSourcesContent = 'No vector sources available.';
+      }
+    }
     
-    sourceBlocks += "<vectorsources>\n" + vectorReferences + "\n</vectorsources>\n";
+    // Add vector sources block
+    sourceBlocks += "<vectorsources>\n" + vectorSourcesContent + "\n</vectorsources>\n";
+    
+    // Create the new reference section
+    if (cleaned.includes('## References')) {
+      // Replace existing references section
+      cleaned = cleaned.replace(/##\s*References[^#]*$/i, '## References\n' + sourceBlocks);
+    } else {
+      // Append references section
+      cleaned += '\n\n## References\n' + sourceBlocks;
+    }
+    
+    // Update web source URLs map since we've rebuilt the references
+    webSourceUrls = {};
+    const newWebsourcesMatch = cleaned.match(/<websources>([\s\S]*?)<\/websources>/m);
+    if (newWebsourcesMatch && newWebsourcesMatch[1].trim()) {
+      const webSourceLines = newWebsourcesMatch[1].trim().split('\n');
+      webSourceLines.forEach(line => {
+        // Extract citation number and URL
+        const citationMatch = line.match(/^\[(\d+)\]/);
+        const urlMatch = line.match(/https?:\/\/[^\s]+/);
+        if (citationMatch && urlMatch) {
+          webSourceUrls[citationMatch[1]] = urlMatch[0];
+        }
+      });
+    }
   }
   
-  // Rebuild the response with fixed source blocks
-  return contentPart + refPart.split('<websources>')[0] + sourceBlocks;
+  // If all source blocks are present but there might be empty web sources
+  if (websourcesMatch && (!websourcesMatch[1].trim() || websourcesMatch[1].trim() === "No web sources available.")) {
+    console.log('[SOURCE_BLOCKS] Web sources block is empty, attempting to populate');
+    
+    // Split at the websources tags
+    const beforeWebsources = cleaned.split('<websources>')[0];
+    const afterWebsources = cleaned.split('</websources>')[1];
+    
+    // Look for URLs in markdown links
+    const urlRegex = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
+    const foundUrls = [];
+    let match;
+    let index = 1;
+    
+    while ((match = urlRegex.exec(cleaned)) !== null) {
+      const title = match[1];
+      const url = match[2];
+      // Deduplicate by URL
+      if (!foundUrls.some(item => item.url === url)) {
+        foundUrls.push({ index, title, url });
+        index++;
+      }
+    }
+    
+    let webSourcesContent = "No web sources available.";
+    if (foundUrls.length > 0) {
+      console.log('[SOURCE_BLOCKS] Found URLs in text links to populate empty websources:', foundUrls.length);
+      webSourcesContent = foundUrls.map(item => `[${item.index}] ${item.title} - ${item.url}`).join('\n');
+      
+      // Update webSourceUrls map
+      foundUrls.forEach(item => {
+        webSourceUrls[item.index.toString()] = item.url;
+      });
+    }
+    
+    // Reassemble with new web sources
+    cleaned = beforeWebsources + '<websources>\n' + webSourcesContent + '\n</websources>' + afterWebsources;
+  }
+  
+  // Scan for citations like [1], [2] that don't have hyperlinks, and add them if URLs are available
+  if (Object.keys(webSourceUrls).length > 0) {
+    console.log('[SOURCE_BLOCKS] Scanning for citations without hyperlinks to add them');
+    
+    // Split into sections to avoid applying changes to References section
+    let contentPart = cleaned;
+    let referencesPart = '';
+    
+    if (cleaned.includes('## References')) {
+      contentPart = cleaned.substring(0, cleaned.indexOf('## References'));
+      referencesPart = cleaned.substring(cleaned.indexOf('## References'));
+    }
+    
+    // Find all citation references like [1], [2], etc.
+    const citationRegex = /\[(\d+)\]/g;
+    const citationsToProcess = [];
+    let citationMatch;
+    let content = contentPart;
+    
+    // Collect all citation positions
+    while ((citationMatch = citationRegex.exec(content)) !== null) {
+      const citationNumber = citationMatch[1];
+      const citationPosition = citationMatch.index;
+      const url = webSourceUrls[citationNumber];
+      
+      if (url) {
+        // Check if this citation already has a nearby hyperlink
+        const nearbyText = content.substring(Math.max(0, citationPosition - 100), citationPosition);
+        const hasNearbyLink = nearbyText.includes('](http');
+        
+        if (!hasNearbyLink) {
+          citationsToProcess.push({
+            number: citationNumber,
+            position: citationPosition,
+            url: url
+          });
+        }
+      }
+    }
+    
+    // Process citations in reverse order (from end to start) to avoid position shifts
+    if (citationsToProcess.length > 0) {
+      console.log('[SOURCE_BLOCKS] Found', citationsToProcess.length, 'citations without hyperlinks to process');
+      citationsToProcess.sort((a, b) => b.position - a.position);
+      
+      for (const citation of citationsToProcess) {
+        // Find a suitable portion of text before the citation to convert to a link
+        const textBefore = content.substring(Math.max(0, citation.position - 100), citation.position);
+        
+        // Look for a sentence fragment, phrase, or word to link
+        let linkText = '';
+        const sentences = textBefore.split(/(?<=[.!?])\s+/);
+        if (sentences.length > 0) {
+          // Take the last sentence/phrase or part of it
+          const lastSentence = sentences[sentences.length - 1];
+          const words = lastSentence.split(/\s+/);
+          if (words.length >= 3) {
+            // Take the last 3-5 words as link text
+            linkText = words.slice(Math.max(0, words.length - 5)).join(' ');
+          } else {
+            linkText = lastSentence;
+          }
+        }
+        
+        // Fallback if no suitable text found
+        if (!linkText || linkText.length < 3) {
+          linkText = 'reference';
+        }
+        
+        // Make sure the link text doesn't already contain a hyperlink
+        if (!linkText.includes('](') && !linkText.includes('](')) {
+          // Create the replacement - adding a hyperlink before the citation
+          const citationStr = `[${citation.number}]`;
+          const replacement = `[${linkText}](${citation.url}) ${citationStr}`;
+          
+          // Replace only this instance of the citation
+          const beforeCitation = content.substring(0, citation.position);
+          const afterCitation = content.substring(citation.position + citationStr.length);
+          content = beforeCitation + replacement + afterCitation;
+        }
+      }
+      
+      // Reassemble the document
+      cleaned = content + referencesPart;
+      console.log('[SOURCE_BLOCKS] Added hyperlinks to citations');
+    }
+  }
+  
+  return cleaned;
 }
 
 // Function to generate additional search queries for more comprehensive Tavily search
@@ -695,7 +822,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const decoded = jwt.verify(token, runtimeConfig.jwtSecret)
+    const decoded = jwt.verify(token, config.jwtSecret)
     const body = await readBody(event)
     const { 
       threadId, 
@@ -773,11 +900,11 @@ export default defineEventHandler(async (event) => {
 
       // Initialize Tavily if needed
       if (enableWebSearch) {
-        initTavily(runtimeConfig.tavilyApiKey)
+        initTavily(config.tavilyApiKey)
       }
 
       // Check query type and get conversation context
-      const { isValid, type } = await isClimateRelated(message, runtimeConfig.geminiApiKey)
+      const { isValid, type } = await isClimateRelated(message, config.geminiApiKey)
       const conversationContext = await getConversationContext(threadId, prisma)
       
       if (!isValid) {
@@ -800,7 +927,7 @@ export default defineEventHandler(async (event) => {
       }
 
       // Determine the query type for better routing
-      const queryType = await routeQuery(message, runtimeConfig.geminiApiKey)
+      const queryType = await routeQuery(message, config.geminiApiKey)
       console.log("[HANDLER] Query type determined:", queryType)
 
       // Route the query based on type, context, and query type
@@ -808,7 +935,7 @@ export default defineEventHandler(async (event) => {
         processingState = 'conversation'
         
         const leafLiteModel = new ChatGoogleGenerativeAI({
-          apiKey: runtimeConfig.geminiApiKey,
+          apiKey: config.geminiApiKey,
           model: "gemini-2.0-flash-lite",
           temperature: 0.3,
           maxRetries: 2,
@@ -847,7 +974,7 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
         // Get search parameters
         const searchParams = await determineSearchParameters(
           message,
-          runtimeConfig.geminiApiKey,
+          config.geminiApiKey,
           mode,
           includeImages
         );
@@ -900,7 +1027,7 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
           console.log('[RESEARCH_PIPELINE] Original user query:', message)
           try {
             // Generate search query
-            const searchQueries = await generateSearchQueries(message, runtimeConfig.geminiApiKey);
+            const searchQueries = await generateSearchQueries(message, config.geminiApiKey);
             console.log('[RESEARCH_PIPELINE] Generated search query:', searchQueries[0]);
             
             console.log(`[RESEARCH_PIPELINE] Running Tavily search with query: "${searchQueries[0]}"`);
@@ -931,24 +1058,9 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
         }
 
         console.log('[RESEARCH_PIPELINE] Extracting sources from search results...')
-        // Extract web and image sources from search results
-        let webSources = [], imageSources = [];
-        
-        try {
-          const extractedSources = extractSourcesFromTavily(webSearchResults);
-          webSources = extractedSources.webSources || [];
-          imageSources = extractedSources.imageSources || [];
-          
-          console.log(`[RESEARCH_PIPELINE] Extracted ${webSources.length} web sources and ${imageSources.length} image sources`);
-        } catch (error) {
-          console.error('[RESEARCH_PIPELINE] Error extracting sources from search results:', error);
-          webSources = [];
-          imageSources = [];
-        }
-        
-        // Store web sources in global cache for recovery if needed
-        webSourcesGlobalCache.set(threadId, webSources);
-        console.log(`[RESEARCH_PIPELINE] Stored ${webSources.length} web sources in global cache for thread ${threadId}`);
+        const { webSources, imageSources } = extractSourcesFromTavily(webSearchResults)
+        // console.log('[RESEARCH_PIPELINE] EXTRACTED WEB SOURCES:', JSON.stringify(webSources, null, 2));
+        // console.log('[RESEARCH_PIPELINE] EXTRACTED IMAGE SOURCES:', JSON.stringify(imageSources, null, 2));
 
         // Perform vector search
         console.log("[RESEARCH_PIPELINE] Starting vector search...")
@@ -998,12 +1110,14 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
 - **Comprehensive Content**: Provide detailed information about the topic with relevant facts, statistics, examples, and context.
 - **Visual Support**: CRITICAL - Embed 3-5 relevant images THROUGHOUT your response when available. Place them at strategic points where they enhance understanding of the content. Each image must have a descriptive caption that explains its relevance. DO NOT group all images together.
 - **Evidence and Citations**: Back up claims with references to source material, citing them inline using [number] or [V#] notation.
-- **Links and Resources**: IMPORTANT - Include hyperlinks throughout your response using markdown format [link text](URL). Insert these where they add value for the user.
+- **Links and Resources**: CRITICAL - Include at least 3-5 clickable hyperlinks throughout your response using markdown format [link text](URL). Insert these where they add value for the user. EACH CITATION in your text should have a corresponding clickable link.
 - **Organization**: Structure your response with clear headings and paragraphs, but maintain a flowing, conversational feel throughout.
 - **Source References**: When referencing vector sources, include the source citation [V#] and quote the relevant text that supports your point.
 - **Recency Priority**: For queries about "latest" or "recent" information, always prioritize web search results with the most recent dates. Feature the newest information prominently at the beginning of your response, especially for publications, events, or current developments.
+- **MANDATORY REFERENCES**: You MUST include a "## References" section with properly formatted sources in the exact specified HTML-like tags. NEVER skip or empty this section.
+- **INLINE LINKS WITH CITATIONS**: When citing a source with [1], [2], etc., ALWAYS make the relevant text ALSO a clickable link to the source URL. For example: "According to [research by NASA](https://nasa.gov/climate) [1], climate change is accelerating." This ensures users can click directly on text without navigating to references.
 
-Your response should be thorough and informative but presented in an accessible, friendly manner. Prioritize including clear hyperlinks that the user can click for more information.`
+Your response should be thorough and informative but presented in an accessible, friendly manner. Prioritize including clear hyperlinks that the user can click for more information directly from the text.`
 
         const imageCaption = imageSources.length > 0 
             ? `${imageSources[0].description} - Additional context about the image.` 
@@ -1020,23 +1134,76 @@ Your response should be thorough and informative but presented in an accessible,
 
         let combinedContext = `Provide a comprehensive, conversational response to this user query: "${message}"
 
-Based on my web search, I found the following information:
+Create an engaging, detailed answer in a natural, friendly style. CRITICAL: Include images, clickable hyperlinks, and references throughout your response. The response should feel like a conversation with a knowledgeable friend rather than a formal paper. 
 
+CRITICAL REQUIREMENT: You MUST embed 3-5 relevant images THROUGHOUT your response using markdown syntax: ![Description](URL). Distribute these images strategically throughout different sections of your answer where they enhance understanding of the concepts you're discussing. Images should be placed inline with your text, not grouped at the beginning or end.
+
+PRIORITY FOR RECENT INFORMATION: For time-sensitive queries or when users ask about "latest", "recent", or "current" information, ALWAYS prioritize the most recent web search results (with the newest dates) over vector sources. Web sources are typically more up-to-date than vector database content. For questions about publications, events, or news, check the dates in the web sources and feature the most recent information prominently at the beginning of your response.
+
+Use the following information sources:
+
+WEB SOURCES:
 ${webSourcesDetails || "No web sources available from search results."}
 
-${includeImages && imageSources.length > 0 ? `\nBased on my image search, I found these relevant images:\n\n${imageSourcesDetails}` : ''}
+IMAGE SOURCES:
+${imageSourcesDetails}
 
-${vectorSearchResults.length > 0 ? `\nBased on your uploaded documents, I found these relevant excerpts:\n\n${vectorSearchResults.map((s, idx) => `[${idx + 1}] ${s.filePath ? `From ${s.filePath}` : 'From your document'} - Chunk ${s.chunkIndex || 'N/A'}\n${s.text}`).join('\n\n')}` : ''}
+VECTOR SOURCES:
+${vectorSourcesDetails}
 
-${mode === 'concise' ? 'Provide a concise answer limited to 1-2 paragraphs maximum. Do not include images in your response.' : 'Provide a detailed, comprehensive answer with multiple sections where appropriate.'}
+${pdfContent ? `PDF CONTENT:
+${pdfContent.slice(0, 8000)}${pdfContent.length > 8000 ? '...' : ''}` : ''}
 
-Your response MUST include a References section at the end that includes ALL web sources and other sources used. 
+Follow these formatting guidelines:
 
-Format the references EXACTLY like this:
+1. **USE CONVERSATIONAL TONE**:
+   - Write as if you're having a direct conversation with the user
+   - Use first and second person ("I", "you") naturally
+   - Be warm and helpful, avoiding overly academic language
+
+2. **INCLUDE IMAGES THROUGHOUT**:
+   ${imageInstructions}
+   - MANDATORY: Images must appear throughout your response, not grouped together
+   - Use images to break up text and illustrate key concepts
+   - Ensure all image URLs are valid and properly formatted
+
+3. **CITE SOURCES PROPERLY**:
+   - Reference web sources as [1], [2], etc.
+   - Reference images as [I1], [I2], etc.
+   - Reference vector database content as [V1], [V2], etc.
+   - Include direct quotes where helpful
+   - CHECK DATES in web sources and prioritize the MOST RECENT information
+   - For queries about "latest" content, make sure to feature the newest information first
+   - Examine URLs and content for date indicators (e.g., "2024-10", "April-June 2024")
+   - CRITICAL: When citing a source, make the relevant text a clickable link. Example: "[According to recent studies](https://example.com) [1], climate change is accelerating."
+
+4. **ORGANIZATION**:
+   - Use markdown headings (## and ###) to organize content
+   - Break into logical sections with clear headings
+   - Use bullet points or numbered lists where appropriate
+   - Bold (**text**) important information
+
+5. **INCLUDE HYPERLINKS**:
+   - CRITICAL: Insert at least 3-5 clickable hyperlinks directly in your text using [Link text](URL) format
+   - Add links whenever mentioning websites, organizations, or resources
+   - Link to key sources when discussing specific information
+   - Use descriptive link text rather than just URLs
+   - IMPORTANT: Every citation [1], [2], etc. should have a corresponding clickable link in the text
+   - When citing a source as [1], always make the relevant text a clickable hyperlink to the source URL
+
+6. **DUAL LINKING REQUIREMENT**:
+   - You MUST use BOTH numbered citations [1] AND make the relevant text a clickable hyperlink
+   - Example: "[Climate research shows](https://climate.org/research) [1] that temperatures are rising."
+   - Another example: "According to [NASA's latest data](https://nasa.gov/climate) [2], Arctic ice is melting."
+   - This dual approach allows users to click directly on text without navigating to references
+
+7. **END WITH REFERENCES - MANDATORY**:
+   - ALWAYS conclude with a 'References' section listing all cited sources
+   - Format each reference in a consistent way
+   - CRITICAL: You MUST include a properly formatted references section with all source blocks
+   - IMPORTANT: Make sure to properly enclose source blocks in these exact HTML-like tags:
 
 \`\`\`
-## References
-
 <websources>
 ${(() => {
   // Deduplicate web sources by URL
@@ -1050,17 +1217,13 @@ ${(() => {
   // Create array from map and sort by original index
   return Array.from(urlMap.values())
     .sort((a, b) => a.idx - b.idx)
-    .map((item, newIdx) => {
-      // Check if we have a dateInfo to include
-      const dateInfo = item.source.dateInfo ? ` (${item.source.dateInfo})` : '';
-      return `[${newIdx + 1}] ${item.source.title}${dateInfo} - ${item.source.url}`;
-    })
+    .map((item, newIdx) => `[${newIdx + 1}] ${item.source.title} - ${item.source.url}`)
     .join('\n');
-})()}
+})() || "Include at least 3-5 web sources with URLs here. Format each source as: [1] Title - https://www.example.com"}
 </websources>
 
 <imagesources>
-${imageSources.map(i => `[I${i.index}] ${i.description} - ${i.url}`).join('\n')}
+${imageSources.map(i => `[I${i.index}] ${i.description} - ${i.url}`).join('\n') || "Include all image sources here. Format as: [I1] Description - https://example.com/image.jpg"}
 </imagesources>
 
 <vectorsources>
@@ -1070,14 +1233,18 @@ Text excerpt: "${(s.text || '').substring(0, 300)}${(s.text || '').length > 300 
 </vectorsources>
 \`\`\`
 
-The block tags must be exactly as shown above, with no extra spacing or characters. ALWAYS include ALL these source blocks in your response, even if they're empty.`
+The block tags must be exactly as shown above, with no extra spacing or characters.
+
+CRITICAL: NEVER respond with empty source blocks. Always include at least 3-5 properly formatted web sources with titles and URLs in the <websources> section.
+
+REMEMBER: The goal is to make your response MAXIMALLY USABLE by including BOTH citation numbers [1] AND clickable hyperlinks on the relevant text, so users don't need to scroll back and forth to references.`
 
         console.log('[RESEARCH_PIPELINE] Initializing Gemini model for final response...')
         console.log('[RESEARCH_PIPELINE] FIRST 8000 CHARS OF COMBINED CONTEXT:');
         console.log(combinedContext.substring(0, 8000) + '...');
         
         const leafExpModel = new ChatGoogleGenerativeAI({
-          apiKey: runtimeConfig.geminiApiKey,
+          apiKey: config.geminiApiKey,
           model: "gemini-2.0-flash-exp",
           temperature: 0.7,  // Increased from 0.5 to encourage more creative formatting and better image incorporation
           maxRetries: 2,
