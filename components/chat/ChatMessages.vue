@@ -274,6 +274,10 @@ const props = defineProps({
   processingState: {
     type: String,
     default: 'general'
+  },
+  includeImages: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -492,7 +496,10 @@ const formatSource = (source) => {
 
 // Process content with optimized markdown rendering
 const getProcessedContent = (message) => {
-  const cacheKey = message.id + '-' + message.content
+  // Include both props.includeImages and current mode in the cache key
+  const isConciseMode = props.processingState === 'concise' || localStorage.getItem('leafweb_responseMode') === 'concise'
+  const effectiveImageSetting = isConciseMode ? false : props.includeImages
+  const cacheKey = message.id + '-' + message.content + '-' + effectiveImageSetting
   
   if (contentCache.has(cacheKey)) {
     return contentCache.get(cacheKey)
@@ -505,7 +512,26 @@ const getProcessedContent = (message) => {
     .replace(/<vectorsources>[^]*?<\/vectorsources>/s, '')
     
   // Render markdown
-  const rendered = DOMPurify.sanitize(md.render(cleanContent))
+  let rendered = DOMPurify.sanitize(md.render(cleanContent))
+  
+  // Hide images if includeImages is false or in concise mode
+  if (!effectiveImageSetting) {
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = rendered
+    
+    // Find all images and replace them with placeholders
+    const images = tempDiv.querySelectorAll('img')
+    images.forEach(img => {
+      const imgPlaceholder = document.createElement('div')
+      imgPlaceholder.className = 'bg-gray-100 text-gray-500 text-xs text-center p-2 rounded border border-gray-200 my-2'
+      imgPlaceholder.innerText = isConciseMode ? 
+        '🖼️ Images disabled in concise mode' : 
+        '🖼️ Image hidden (toggle images to view)'
+      img.parentNode.replaceChild(imgPlaceholder, img)
+    })
+    
+    rendered = tempDiv.innerHTML
+  }
   
   // Cache the result
   contentCache.set(cacheKey, rendered)
@@ -611,12 +637,28 @@ watch(() => props.selectedThread, () => {
   nextTick(scrollToBottom)
 })
 
+// Watch for changes in image inclusion setting
+watch(() => props.includeImages, () => {
+  // Clear the content cache when image setting changes
+  contentCache.clear()
+})
+
+// Watch for changes in processing state (concise/detailed mode)
+watch(() => props.processingState, () => {
+  // Clear the content cache when mode changes
+  contentCache.clear()
+})
+
 // Watch for new messages and scroll to bottom
 watch(() => props.messages.length, () => {
   nextTick(scrollToBottom)
 })
 
 onMounted(() => {
+  // Clear cache to ensure fresh rendering with current settings
+  contentCache.clear()
+  
+  // Scroll to bottom
   scrollToBottom()
 })
 </script>

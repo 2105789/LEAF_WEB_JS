@@ -76,6 +76,7 @@
         :is-loading="isLoading"
         :processing-time="processingTime"
         :processing-state="processingState"
+        :include-images="includeImages"
         @copy-success="showToast('Copied to clipboard!', 'success')"
         @copy-error="showToast('Failed to copy text', 'error')"
         @submit="handleSubmit"
@@ -85,7 +86,10 @@
       <ChatInput
         :disabled="!selectedThread || isLoading"
         :is-loading="isLoading"
+        :initial-response-length="responseLengthMode"
+        :initial-include-images="includeImages"
         @submit="handleSubmit"
+        @setting-changed="updateSettings"
       />
     </div>
     
@@ -135,6 +139,25 @@ const processingState = ref('general')
 const processingTime = ref(0)
 const processingTimer = ref(null)
 const isSidebarOpen = ref(false) // Track sidebar state for mobile
+const includeImages = ref(true) // Track the image toggle state
+const responseLengthMode = ref('detailed') // Track the response length toggle state (concise/detailed)
+
+// Initialize settings from localStorage if available
+if (typeof window !== 'undefined') {
+  const savedMode = localStorage.getItem('leafweb_responseMode')
+  const savedIncludeImages = localStorage.getItem('leafweb_includeImages')
+  
+  if (savedMode) {
+    responseLengthMode.value = savedMode
+  }
+  
+  if (savedIncludeImages !== null) {
+    includeImages.value = savedIncludeImages === 'true'
+  } else if (responseLengthMode.value === 'concise') {
+    // Default for concise mode is images off
+    includeImages.value = false
+  }
+}
 
 // Toast notifications system
 const toasts = ref([])
@@ -450,7 +473,29 @@ const handleSubmit = async (messageData) => {
   
   isLoading.value = true
   startStopwatch()
-  processingState.value = messageData.mode || 'general'
+  
+  // Update response settings
+  if (messageData.mode) {
+    responseLengthMode.value = messageData.mode
+    processingState.value = messageData.mode
+    
+    // Persist to localStorage
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('leafweb_responseMode', messageData.mode)
+    }
+  } else {
+    processingState.value = 'general'
+  }
+  
+  // Update the image inclusion state if provided
+  if (messageData.includeImages !== undefined) {
+    includeImages.value = messageData.includeImages
+    
+    // Persist to localStorage
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('leafweb_includeImages', messageData.includeImages)
+    }
+  }
 
   try {
     // Add temporary user message
@@ -477,7 +522,13 @@ const handleSubmit = async (messageData) => {
         threadId: selectedThread.value.id,
         message: messageData.message,
         pdfContext: messageData.pdfContext,
-        mode: messageData.mode || 'general'
+        mode: messageData.mode || responseLengthMode.value,
+        includeImages: (messageData.mode === 'concise' || responseLengthMode.value === 'concise') 
+          ? false  // Explicitly force images off in concise mode
+          : (messageData.includeImages !== undefined ? messageData.includeImages : includeImages.value),
+        responseFormat: (messageData.mode === 'concise' || responseLengthMode.value === 'concise')
+          ? 'IMPORTANT: Provide an extremely concise answer in EXACTLY 1-2 short paragraphs maximum. Do not exceed 2 paragraphs under any circumstances. Focus only on the most essential information. Keep it brief but make sure to properly cite web sources using the websources tag format. Never include images in concise mode.'
+          : 'Provide a detailed and thorough answer with complete information and relevant context. Always properly cite web sources using the websources tag format for web references.'
       }
     })
 
@@ -554,6 +605,28 @@ onBeforeUnmount(() => {
   stopStopwatch()
   window.removeEventListener('keydown', handleEscKey)
 })
+
+// Update settings from ChatInput component
+const updateSettings = (settings) => {
+  if (settings.mode !== undefined) {
+    responseLengthMode.value = settings.mode
+    
+    // Always enforce images off in concise mode
+    if (settings.mode === 'concise') {
+      includeImages.value = false
+    }
+  }
+  
+  if (settings.includeImages !== undefined) {
+    includeImages.value = settings.includeImages
+  }
+  
+  // Save to localStorage for persistence
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('leafweb_responseMode', responseLengthMode.value)
+    localStorage.setItem('leafweb_includeImages', includeImages.value)
+  }
+}
 </script>
 
 <style scoped>

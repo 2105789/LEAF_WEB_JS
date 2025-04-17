@@ -177,19 +177,19 @@ async function getConversationContext(threadId, prisma, limit = 5) {
 }
 
 // Function to determine optimal search parameters based on query
-async function determineSearchParameters(query, geminiApiKey) {
-  // Use the same default parameters for all queries
-  const defaultParams = {
+async function determineSearchParameters(query, geminiApiKey, mode = 'detailed', includeImages = true) {
+  // Use parameters based on mode and image settings
+  const params = {
     searchDepth: "advanced",
     includeAnswer: "advanced",
-    includeImages: true,
-    includeImageDescriptions: true,
+    includeImages: mode === 'concise' ? false : includeImages,
+    includeImageDescriptions: mode === 'concise' ? false : includeImages,
     includeRawContent: true,
-    maxResults: 10
+    maxResults: mode === 'concise' ? 5 : 10 // Reduce results for concise mode
   };
   
-  console.log("[SEARCH_PARAMS] Using fixed default parameters for all queries:", JSON.stringify(defaultParams, null, 2));
-  return defaultParams;
+  console.log("[SEARCH_PARAMS] Using parameters:", JSON.stringify(params, null, 2));
+  return params;
 }
 
 // Helper function to initialize Tavily
@@ -607,7 +607,9 @@ export default defineEventHandler(async (event) => {
       threadId, 
       message, 
       pdfContext,
-      enableWebSearch = true
+      enableWebSearch = true,
+      mode = 'detailed',
+      includeImages = true
     } = body
 
     if (!threadId || !message) {
@@ -620,6 +622,8 @@ export default defineEventHandler(async (event) => {
     console.log(`[CHAT_API] Thread ID: ${threadId}`);
     console.log(`[CHAT_API] Web Search Enabled: ${enableWebSearch}`);
     console.log(`[CHAT_API] PDF Context Present: ${!!pdfContext}`);
+    console.log(`[CHAT_API] Response Mode: ${mode}`);
+    console.log(`[CHAT_API] Include Images: ${includeImages}`);
     console.log("==============================================");
 
     // Verify thread ownership and get thread with its messages
@@ -746,7 +750,13 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
         processingState = 'research-pipeline'
         console.log('[RESEARCH_PIPELINE] Starting research pipeline processing...')
         
-        let searchParams = await determineSearchParameters(message, config.geminiApiKey)
+        // Get search parameters
+        const searchParams = await determineSearchParameters(
+          message,
+          config.geminiApiKey,
+          mode,
+          includeImages
+        );
         console.log('[RESEARCH_PIPELINE] Search parameters determined:', searchParams)
         
         const searchOptions = {

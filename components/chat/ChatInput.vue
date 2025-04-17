@@ -28,6 +28,65 @@
       </button>
     </div>
 
+    <!-- Response Options Controls -->
+    <div class="mb-2 flex flex-wrap gap-2 md:gap-3 justify-between items-center">
+      <!-- Response Length Toggle -->
+      <div class="flex items-center bg-gray-50 rounded-md border border-gray-100 px-2 py-1">
+        <span class="text-xs text-gray-600 mr-2">Response:</span>
+        <div class="flex items-center bg-gray-100 rounded-full p-0.5">
+          <button 
+            @click="setResponseMode('concise')" 
+            :class="[
+              'px-2 py-0.5 rounded-full text-xs transition-colors',
+              responseLengthMode === 'concise' 
+                ? 'bg-teal-500 text-white' 
+                : 'text-gray-600 hover:bg-gray-200'
+            ]"
+          >
+            Concise
+          </button>
+          <button 
+            @click="setResponseMode('detailed')" 
+            :class="[
+              'px-2 py-0.5 rounded-full text-xs transition-colors',
+              responseLengthMode === 'detailed' 
+                ? 'bg-teal-500 text-white' 
+                : 'text-gray-600 hover:bg-gray-200'
+            ]"
+          >
+            Detailed
+          </button>
+        </div>
+      </div>
+
+      <!-- Images Toggle -->
+      <div class="flex items-center bg-gray-50 rounded-md border border-gray-100 px-2 py-1">
+        <span class="text-xs text-gray-600 mr-2">Images:</span>
+        <div class="flex items-center">
+          <button 
+            @click="toggleImages()"
+            :class="[
+              'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out',
+              includeImages ? 'bg-teal-500' : 'bg-gray-300',
+              responseLengthMode === 'concise' && !includeImages ? 'opacity-50 cursor-not-allowed' : ''
+            ]"
+            role="switch"
+            :aria-checked="includeImages"
+            :disabled="responseLengthMode === 'concise' && !includeImages"
+          >
+            <span 
+              :class="[
+                'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                includeImages ? 'translate-x-4' : 'translate-x-0'
+              ]"
+            ></span>
+          </button>
+          <span class="ml-2 text-xs text-gray-600">{{ includeImages ? 'On' : 'Off' }}</span>
+          <span v-if="responseLengthMode === 'concise' && !includeImages" class="ml-2 text-xs text-gray-400 italic">(disabled in concise mode)</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Main Input Form -->
     <form @submit.prevent="handleSubmit" class="relative rounded-lg border border-gray-100 bg-white shadow-sm transition focus-within:border-teal-200 focus-within:ring-1 focus-within:ring-teal-200">
       <textarea
@@ -199,15 +258,27 @@ const props = defineProps({
   isLoading: {
     type: Boolean,
     default: false
+  },
+  initialResponseLength: {
+    type: String,
+    default: 'detailed'
+  },
+  initialIncludeImages: {
+    type: Boolean,
+    default: true
   }
 })
 
-const emit = defineEmits(['submit', 'pdf-upload'])
+const emit = defineEmits(['submit', 'pdf-upload', 'setting-changed'])
 const message = ref('')
 const messageInput = ref(null)
 const fileInput = ref(null)
 const showPdfModal = ref(false)
 const attachedPdfs = ref([])
+
+// Response settings
+const responseLengthMode = ref(props.initialResponseLength) // 'concise' or 'detailed'
+const includeImages = ref(props.initialIncludeImages) // include or exclude images
 
 // Format file size
 const formatFileSize = (bytes) => {
@@ -301,7 +372,8 @@ const handleSubmit = () => {
   emit('submit', {
     message: message.value.trim(),
     pdfContext,
-    mode: 'general'
+    mode: responseLengthMode.value, // Use the response length setting
+    includeImages: includeImages.value // Add the image setting
   })
   
   // Clear input but keep PDF context
@@ -315,12 +387,83 @@ watch(() => props.disabled, (newValue) => {
   }
 })
 
+// Watch for changes in parent settings
+watch(() => props.initialResponseLength, (newValue) => {
+  responseLengthMode.value = newValue
+})
+
+watch(() => props.initialIncludeImages, (newValue) => {
+  includeImages.value = newValue
+})
+
 // Focus input on component mount
 onMounted(() => {
+  // Load settings from localStorage if available
+  if (typeof window !== 'undefined') {
+    const savedMode = localStorage.getItem('leafweb_responseMode')
+    const savedIncludeImages = localStorage.getItem('leafweb_includeImages')
+    
+    if (savedMode) {
+      responseLengthMode.value = savedMode
+    }
+    
+    if (savedIncludeImages !== null) {
+      includeImages.value = savedIncludeImages === 'true'
+    } else if (responseLengthMode.value === 'concise') {
+      // Default for concise mode is images off
+      includeImages.value = false
+    }
+  }
+  
   if (messageInput.value && !props.disabled) {
     messageInput.value.focus()
   }
 })
+
+// Update response mode
+const setResponseMode = (mode) => {
+  responseLengthMode.value = mode
+  
+  // ALWAYS turn off images in concise mode
+  if (mode === 'concise') {
+    includeImages.value = false
+  }
+  
+  // Persist settings to localStorage
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('leafweb_responseMode', mode)
+    localStorage.setItem('leafweb_includeImages', includeImages.value)
+  }
+  
+  // Notify parent component of changes immediately
+  emit('setting-changed', {
+    mode: responseLengthMode.value,
+    includeImages: includeImages.value
+  })
+}
+
+// Toggle images
+const toggleImages = () => {
+  // Don't allow enabling images in concise mode
+  if (responseLengthMode.value === 'concise' && !includeImages.value) {
+    // Show a message about why images can't be enabled
+    alert('Images cannot be enabled in concise mode. Switch to detailed mode to enable images.')
+    return
+  }
+  
+  includeImages.value = !includeImages.value
+  
+  // Persist settings to localStorage
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('leafweb_includeImages', includeImages.value)
+  }
+  
+  // Notify parent component of changes immediately
+  emit('setting-changed', {
+    mode: responseLengthMode.value,
+    includeImages: includeImages.value
+  })
+}
 </script>
 
 <style scoped>
@@ -332,6 +475,12 @@ onMounted(() => {
   
   .max-h-\[200px\] {
     max-height: 120px; /* Smaller max height on mobile */
+  }
+  
+  /* Stack the option controls vertically on small screens */
+  .response-options {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style> 
