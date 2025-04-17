@@ -9,10 +9,16 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf"
 import axios from 'axios'
-import config from '../config/leaf-config.json'
+import leafConfig from '../config/leaf-config.json'
+import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenerativeAIStream, StreamingTextResponse } from 'ai'
+import { getToken } from 'next-auth/jwt'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '../auth/[...nextauth]'
+import { useRuntimeConfig } from '#imports'
 
 const prisma = new PrismaClient()
-const config = useRuntimeConfig()
+const runtimeConfig = useRuntimeConfig()
 
 // Model configurations
 const MODEL_CONFIG = {
@@ -43,8 +49,8 @@ const vectorResultsCache = new Map()
 const webSourcesGlobalCache = new Map()
 
 // Qdrant client configuration
-const QDRANT_URL = config.qdrantUrl
-const QDRANT_API_KEY = config.qdrantApiKey
+const QDRANT_URL = runtimeConfig.qdrantUrl
+const QDRANT_API_KEY = runtimeConfig.qdrantApiKey
 const COLLECTION_NAME = "leaf_data_v2"
 
 const qdrantClient = new QdrantClient({
@@ -689,7 +695,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const decoded = jwt.verify(token, config.jwtSecret)
+    const decoded = jwt.verify(token, runtimeConfig.jwtSecret)
     const body = await readBody(event)
     const { 
       threadId, 
@@ -767,11 +773,11 @@ export default defineEventHandler(async (event) => {
 
       // Initialize Tavily if needed
       if (enableWebSearch) {
-        initTavily(config.tavilyApiKey)
+        initTavily(runtimeConfig.tavilyApiKey)
       }
 
       // Check query type and get conversation context
-      const { isValid, type } = await isClimateRelated(message, config.geminiApiKey)
+      const { isValid, type } = await isClimateRelated(message, runtimeConfig.geminiApiKey)
       const conversationContext = await getConversationContext(threadId, prisma)
       
       if (!isValid) {
@@ -794,7 +800,7 @@ export default defineEventHandler(async (event) => {
       }
 
       // Determine the query type for better routing
-      const queryType = await routeQuery(message, config.geminiApiKey)
+      const queryType = await routeQuery(message, runtimeConfig.geminiApiKey)
       console.log("[HANDLER] Query type determined:", queryType)
 
       // Route the query based on type, context, and query type
@@ -802,7 +808,7 @@ export default defineEventHandler(async (event) => {
         processingState = 'conversation'
         
         const leafLiteModel = new ChatGoogleGenerativeAI({
-          apiKey: config.geminiApiKey,
+          apiKey: runtimeConfig.geminiApiKey,
           model: "gemini-2.0-flash-lite",
           temperature: 0.3,
           maxRetries: 2,
@@ -841,7 +847,7 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
         // Get search parameters
         const searchParams = await determineSearchParameters(
           message,
-          config.geminiApiKey,
+          runtimeConfig.geminiApiKey,
           mode,
           includeImages
         );
@@ -894,7 +900,7 @@ IMPORTANT: Do not wrap your response in markdown code blocks. Use markdown forma
           console.log('[RESEARCH_PIPELINE] Original user query:', message)
           try {
             // Generate search query
-            const searchQueries = await generateSearchQueries(message, config.geminiApiKey);
+            const searchQueries = await generateSearchQueries(message, runtimeConfig.geminiApiKey);
             console.log('[RESEARCH_PIPELINE] Generated search query:', searchQueries[0]);
             
             console.log(`[RESEARCH_PIPELINE] Running Tavily search with query: "${searchQueries[0]}"`);
@@ -1071,7 +1077,7 @@ The block tags must be exactly as shown above, with no extra spacing or characte
         console.log(combinedContext.substring(0, 8000) + '...');
         
         const leafExpModel = new ChatGoogleGenerativeAI({
-          apiKey: config.geminiApiKey,
+          apiKey: runtimeConfig.geminiApiKey,
           model: "gemini-2.0-flash-exp",
           temperature: 0.7,  // Increased from 0.5 to encourage more creative formatting and better image incorporation
           maxRetries: 2,
